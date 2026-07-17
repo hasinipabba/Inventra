@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 244 246 251;
+  --surface: 255 255 255;
+  --surface-2: 237 241 248;
+  --border: 223 229 240;
+  --text: 15 23 42;
+  --muted: 100 112 134;
+  --primary: 59 130 246;
+  --primary-fg: 255 255 255;
+}
+
+.dark {
+  --bg: 0 0 0;
+  --surface: 10 10 10;
+  --surface-2: 18 18 18;
+  --border: 38 38 38;
+  --text: 237 237 237;
+  --muted: 115 115 115;
+  --primary: 47 129 247;
+  --primary-fg: 255 255 255;
+}
+.dark body {
+  background-color: #000000;
+}
+html.dark {
+  background-color: #000000;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+html {
+  color-scheme: light;
+  overscroll-behavior: none;
+  background-color: #000;
+  scroll-behavior: smooth;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  overscroll-behavior: none;
+}
+
+::selection {
+  background-color: rgb(var(--primary) / 0.25);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 999px;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.dark .glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* subtle grid texture used behind the KPI hero */
+.grid-texture {
+  background-image: radial-gradient(rgb(var(--border)) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
