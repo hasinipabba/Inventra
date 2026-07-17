@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Trash2, X, Loader2, AlertCircle } from "lucide-react";
-import { warehouses } from "@/lib/mock-data";
 import type { AppUser, UserRole } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +19,7 @@ const ROLES: UserRole[] = ["Administrator", "Inventory Manager", "Warehouse Staf
 export function UsersView() {
   const { showToast } = useToast();
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [warehouseNames, setWarehouseNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -27,23 +27,19 @@ export function UsersView() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/users")
-      .then((res) => {
-        if (!res.ok) throw new Error("failed");
-        return res.json() as Promise<AppUser[]>;
+    Promise.all([
+      fetch("/api/users").then((res) => { if (!res.ok) throw new Error("failed"); return res.json() as Promise<AppUser[]>; }),
+      fetch("/api/warehouses").then((res) => res.ok ? res.json() as Promise<{ name: string }[]> : []),
+    ])
+      .then(([usersData, whData]) => {
+        if (!cancelled) {
+          setUsers(usersData);
+          setWarehouseNames((whData as { name: string }[]).map((w) => w.name));
+        }
       })
-      .then((data) => {
-        if (!cancelled) setUsers(data);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Couldn't load users from the server.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => { if (!cancelled) setError("Couldn't load users from the server."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   async function invite(u: Omit<AppUser, "id" | "status" | "lastActive">) {
@@ -143,16 +139,18 @@ export function UsersView() {
         </div>
       </Card>
 
-      {open && <InviteModal onClose={() => setOpen(false)} onInvite={invite} saving={saving} />}
+      {open && <InviteModal warehouseNames={warehouseNames} onClose={() => setOpen(false)} onInvite={invite} saving={saving} />}
     </div>
   );
 }
 
 function InviteModal({
+  warehouseNames,
   onClose,
   onInvite,
   saving,
 }: {
+  warehouseNames: string[];
   onClose: () => void;
   onInvite: (u: Omit<AppUser, "id" | "status" | "lastActive">) => void;
   saving: boolean;
@@ -160,7 +158,7 @@ function InviteModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<UserRole>("Warehouse Staff");
-  const [warehouse, setWarehouse] = useState(warehouses[0].name);
+  const [warehouse, setWarehouse] = useState(warehouseNames[0] ?? "");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-fade-in">
@@ -198,8 +196,8 @@ function InviteModal({
           <label className="block text-xs font-medium text-muted">
             Assigned warehouse
             <select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="mt-1 h-9 w-full rounded-lg border border-border bg-surface2 px-3 text-sm outline-none focus:border-primary">
-              {warehouses.map((w) => (
-                <option key={w.id}>{w.name}</option>
+              {warehouseNames.map((wn) => (
+                <option key={wn}>{wn}</option>
               ))}
             </select>
           </label>

@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, X, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { products, warehouses, aiInsights } from "@/lib/mock-data";
 
 interface Msg {
   role: "user" | "ai";
@@ -19,54 +18,49 @@ const SUGGESTIONS = [
   "Generate today's inventory report.",
 ];
 
-function answer(question: string): string {
-  const q = question.toLowerCase();
-  if (q.includes("restock")) {
-    const low = products.filter((p) => p.status === "low" || p.status === "out").slice(0, 4);
-    return `${low.length} products need restocking soon: ${low.map((p) => p.name).join(", ")}. I'd prioritize items already at zero stock.`;
-  }
-  if (q.includes("expired") && !q.includes("expire this")) {
-    const expired = products.filter((p) => p.status === "expired").slice(0, 4);
-    return expired.length
-      ? `${expired.length} expired products on record: ${expired.map((p) => p.name).join(", ")}. Recommend routing these to disposal or supplier return.`
-      : "No expired products right now — nice work.";
-  }
-  if (q.includes("low inventory") || q.includes("warehouse")) {
-    const w = [...warehouses].sort((a, b) => b.used / b.capacity - a.used / a.capacity)[0];
-    return `${w.name} is running the tightest, at ${Math.round((w.used / w.capacity) * 100)}% capacity. Warehouse C currently has the most headroom.`;
-  }
-  if (q.includes("expire this week")) {
-    const expiring = products.filter((p) => p.status === "expiring").slice(0, 5);
-    return `42 products expire this week, including ${expiring.map((p) => p.name).slice(0, 3).join(", ")}. Full breakdown is on the Expiry timeline in Analytics.`;
-  }
-  if (q.includes("slow")) {
-    return "Slow-moving stock right now: Cadbury Dairy Milk 55g and 6 other SKUs with no movement in 90+ days, concentrated in Warehouse B.";
-  }
-  if (q.includes("report")) {
-    return "Today: 738 in stock, 64 low stock, 18 out of stock, 34 restocked, 16 transfers in progress. Full report is ready under Reports.";
-  }
-  if (q.includes("transfer")) {
-    return "Recommended: move 80 units of Paracetamol 500mg from Warehouse A to Warehouse D, and redistribute excess stock from Warehouse B to Warehouse C.";
-  }
-  return "Here's what I found based on current inventory data — for a deeper look, check AI Insights or Analytics.";
-}
-
 export function AIAssistant() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([
-    { role: "ai", text: `Hi Ananya, I'm the Inventra assistant. ${aiInsights[0].title}. Ask me anything about your inventory.` },
+    { role: "ai", text: "Hi, I'm the Inventra assistant. Ask me anything about your inventory." },
   ]);
+  const [thinking, setThinking] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [msgs, open]);
+  }, [msgs, open, thinking]);
 
-  function send(text: string) {
-    if (!text.trim()) return;
-    setMsgs((m) => [...m, { role: "user", text }, { role: "ai", text: answer(text) }]);
+  async function send(text: string) {
+    if (!text.trim() || thinking) return;
+    const userMsg: Msg = { role: "user", text };
+    const next = [...msgs, userMsg];
+    setMsgs(next);
     setInput("");
+    setThinking(true);
+
+    // Convert internal msg history to OpenAI-compatible format for the API.
+    // Skip the initial AI greeting (index 0) — it's a UI artefact, not a real
+    // model turn; sending it as an "assistant" message confuses the context.
+    const apiMessages = next.slice(1).map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.text,
+    }));
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: apiMessages }),
+      });
+      const data = await res.json();
+      const reply = res.ok ? (data.message ?? "No response.") : (data.error ?? "Something went wrong.");
+      setMsgs((m) => [...m, { role: "ai", text: reply }]);
+    } catch {
+      setMsgs((m) => [...m, { role: "ai", text: "Network error — please try again." }]);
+    } finally {
+      setThinking(false);
+    }
   }
 
   return (
@@ -105,6 +99,13 @@ export function AIAssistant() {
                 </p>
               </div>
             ))}
+            {thinking && (
+              <div className="flex justify-start">
+                <p className="max-w-[85%] rounded-xl bg-surface2 px-3 py-2 text-[13px] text-muted">
+                  Thinking…
+                </p>
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 
@@ -114,7 +115,8 @@ export function AIAssistant() {
                 <button
                   key={s}
                   onClick={() => send(s)}
-                  className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted hover:border-primary hover:text-primary"
+                  disabled={thinking}
+                  className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted hover:border-primary hover:text-primary disabled:opacity-40"
                 >
                   {s}
                 </button>
@@ -131,9 +133,14 @@ export function AIAssistant() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask about your inventory…"
-                className="h-9 flex-1 rounded-lg border border-border bg-surface2 px-3 text-sm outline-none focus:border-primary"
+                disabled={thinking}
+                className="h-9 flex-1 rounded-lg border border-border bg-surface2 px-3 text-sm outline-none focus:border-primary disabled:opacity-50"
               />
-              <button type="submit" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <button
+                type="submit"
+                disabled={thinking}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+              >
                 <Send size={15} />
               </button>
             </form>

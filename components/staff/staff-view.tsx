@@ -12,7 +12,6 @@ import {
   Phone,
 } from "lucide-react";
 import type { StaffMember } from "@/lib/types";
-import { warehouses } from "@/lib/mock-data";
 import { Card, StatCard } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -27,6 +26,7 @@ const STAFF_STATUS_STYLE: Record<StaffMember["status"], string> = {
 export function StaffView() {
   const { showToast } = useToast();
   const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [warehouseNames, setWarehouseNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -34,9 +34,10 @@ export function StaffView() {
   async function loadAll() {
     setLoading(true);
     try {
-      const staffRes = await fetch("/api/staff");
+      const [staffRes, whRes] = await Promise.all([fetch("/api/staff"), fetch("/api/warehouses")]);
       if (!staffRes.ok) throw new Error("load failed");
       setStaff(await staffRes.json());
+      if (whRes.ok) setWarehouseNames(((await whRes.json()) as { name: string }[]).map((w) => w.name));
     } catch {
       setError("Couldn't load staff data from the server.");
     } finally {
@@ -139,6 +140,7 @@ export function StaffView() {
 
       {modalOpen && (
         <AddStaffModal
+          warehouseNames={warehouseNames}
           onClose={() => setModalOpen(false)}
           onCreated={(member) => {
             setStaff((prev) => [member, ...prev]);
@@ -151,10 +153,10 @@ export function StaffView() {
   );
 }
 
-function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: StaffMember) => void }) {
+function AddStaffModal({ warehouseNames, onClose, onCreated }: { warehouseNames: string[]; onClose: () => void; onCreated: (s: StaffMember) => void }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
-  const [department, setDepartment] = useState(warehouses[0]?.name ?? "");
+  const [department, setDepartment] = useState(warehouseNames[0] ?? "");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [shiftStart, setShiftStart] = useState("09:00");
@@ -227,8 +229,8 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <label className="block text-xs font-medium text-muted">
               Warehouse
               <select value={department} onChange={(e) => setDepartment(e.target.value)} className="mt-1 h-9 w-full rounded-lg border border-border bg-surface2 px-3 text-sm outline-none focus:border-primary">
-                {warehouses.map((w) => (
-                  <option key={w.id}>{w.name}</option>
+                {warehouseNames.map((name) => (
+                  <option key={name}>{name}</option>
                 ))}
               </select>
             </label>

@@ -1,6 +1,7 @@
 "use client";
 
-import { warehouses } from "@/lib/mock-data";
+import { useEffect, useState } from "react";
+import type { Warehouse } from "@/lib/types";
 import { Card } from "@/components/ui/card";
 import { Warehouse as WarehouseIcon, ArrowLeftRight, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,10 @@ function heatColor(pct: number) {
 }
 
 export function WarehousesView() {
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  useEffect(() => {
+    fetch("/api/warehouses").then((r) => r.json()).then(setWarehouses).catch(() => {});
+  }, []);
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

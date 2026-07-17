@@ -1,12 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { warehouses } from "@/lib/mock-data";
+import type { Warehouse } from "@/lib/types";
 
 const COLORS = ["#3B82F6", "#22C55E", "#F59E0B", "#8B5CF6"];
 
 export function WarehouseBar() {
-  const data = warehouses.map((w) => ({ name: w.name.split("—")[1]?.trim() ?? w.name, utilization: Math.round((w.used / w.capacity) * 100) }));
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  useEffect(() => {
+    fetch("/api/warehouses").then((r) => r.json()).then(setWarehouses).catch(() => {});
+  }, []);
+  const data = warehouses.map((w) => ({ name: w.name.split("—")[1]?.trim() ?? w.name, utilization: w.capacity > 0 ? Math.round((w.used / w.capacity) * 100) : 0 }));
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, PackageSearch, RotateCcw, Save, ScanBarcode, Camera as CameraIcon, ImageUp, Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { warehouses } from "@/lib/mock-data";
 import type { Product } from "@/lib/types";
 import { BarcodeScanner, type ScannerErrorKind } from "./barcode-scanner";
 import { BarcodeImageUpload } from "./barcode-image-upload";
@@ -28,6 +27,10 @@ export function ScanWorkflow() {
   const [stage, setStage] = useState<Stage>({ kind: "scanning" });
   const [inputMethod, setInputMethod] = useState<"camera" | "upload" | "manual">("camera");
   const [batchForm, setBatchForm] = useState(emptyBatch);
+  const [warehouseNames, setWarehouseNames] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/warehouses").then((r) => r.json()).then((ws: { name: string }[]) => setWarehouseNames(ws.map((w) => w.name))).catch(() => {});
+  }, []);
   const [ocrLowConfidence, setOcrLowConfidence] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
@@ -329,6 +332,7 @@ export function ScanWorkflow() {
             ocrLowConfidence={ocrLowConfidence}
             applyOcr={applyOcr}
             saving={saving}
+            warehouseNames={warehouseNames}
             onSaveNewProduct={(draft) => saveNewProductWithBatch(stage.kind === "new_product" ? stage.barcode : (stage as any).barcode, draft, stage.kind === "new_product" ? stage.sourceLabel : "manual")}
             onSaveBatch={(product) => saveBatch(product, (stage as any).barcode)}
           />
@@ -345,6 +349,7 @@ function BatchAndProductForm({
   ocrLowConfidence,
   applyOcr,
   saving,
+  warehouseNames,
   onSaveNewProduct,
   onSaveBatch,
 }: {
@@ -354,6 +359,7 @@ function BatchAndProductForm({
   ocrLowConfidence: Set<string>;
   applyOcr: (extraction: OcrExtraction) => void;
   saving: boolean;
+  warehouseNames: string[];
   onSaveNewProduct: (draft: Partial<Product>) => void;
   onSaveBatch: (product: Product) => void;
 }) {
@@ -438,9 +444,9 @@ function BatchAndProductForm({
               onChange={(e) => setBatchForm({ ...batchForm, warehouse: e.target.value })}
             >
               <option value="">Select…</option>
-              {warehouses.map((w) => (
-                <option key={w.id} value={w.name}>
-                  {w.name}
+              {warehouseNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
                 </option>
               ))}
             </select>

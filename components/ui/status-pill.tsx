@@ -9,8 +9,9 @@ const CONFIG: Record<ProductStatus, { label: string; dot: string; text: string; 
   expired: { label: "Expired", dot: "bg-expired", text: "text-expired", bg: "bg-expired/10" },
 };
 
-export function StatusPill({ status }: { status: ProductStatus }) {
-  const c = CONFIG[status];
+export function StatusPill({ status }: { status: string }) {
+  const key = (status ?? "").toLowerCase().replace(/\s+/g, "-").replace("out-of-stock", "out").replace("low-stock", "low").replace("expiring-soon", "expiring") as ProductStatus;
+  const c = CONFIG[key] ?? CONFIG["healthy"];
   return (
     <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium", c.bg, c.text)}>
       <span className={cn("h-1.5 w-1.5 rounded-full", c.dot, status === "out" && "animate-pulse2")} />

@@ -7,6 +7,7 @@ import {
   purchaseRequests as seedPurchaseRequests,
   notifications as seedNotifications,
   staff as seedStaff,
+  warehouses as seedWarehouses,
 } from "./mock-data";
 import type {
   Product,
@@ -22,6 +23,7 @@ import type {
   TaskWithAssignees,
   ChecklistItem,
   TaskActivityEntry,
+  Warehouse,
 } from "./types";
 
 export interface NotificationPrefs {
@@ -201,11 +203,19 @@ async function initSchema() {
     "aiDigest" BOOLEAN DEFAULT false
   )`;
 
+  await sql`CREATE TABLE IF NOT EXISTS warehouses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    location TEXT,
+    capacity INT DEFAULT 0,
+    manager TEXT
+  )`;
+
   await seedIfEmpty();
 }
 
 async function seedIfEmpty() {
-  const [productCount, categoryCount, supplierCount, userCount, prCount, notifCount, staffCount] = await Promise.all([
+  const [productCount, categoryCount, supplierCount, userCount, prCount, notifCount, staffCount, warehouseCount] = await Promise.all([
     sql`SELECT COUNT(*)::int AS count FROM products`,
     sql`SELECT COUNT(*)::int AS count FROM categories`,
     sql`SELECT COUNT(*)::int AS count FROM suppliers`,
@@ -213,6 +223,7 @@ async function seedIfEmpty() {
     sql`SELECT COUNT(*)::int AS count FROM purchase_requests`,
     sql`SELECT COUNT(*)::int AS count FROM notifications`,
     sql`SELECT COUNT(*)::int AS count FROM staff`,
+    sql`SELECT COUNT(*)::int AS count FROM warehouses`,
   ]);
 
   if (categoryCount[0].count === 0) {
@@ -295,6 +306,17 @@ async function seedIfEmpty() {
   await sql`INSERT INTO notification_prefs (id, "lowStock", expiry, transfers, "aiDigest")
              VALUES (1, true, true, true, false)
              ON CONFLICT (id) DO NOTHING`;
+
+  if (warehouseCount[0].count === 0) {
+    await Promise.all(
+      seedWarehouses.map(
+        (w) =>
+          sql`INSERT INTO warehouses (id, name, location, capacity, manager)
+              VALUES (${w.id}, ${w.name}, ${w.location}, ${w.capacity}, ${w.manager})
+              ON CONFLICT (id) DO NOTHING`
+      )
+    );
+  }
 }
 
 // Adds a fresh alert to the notification feed — used so real actions (low
@@ -836,5 +858,110 @@ export async function deleteTask(id: string): Promise<void> {
   await ready();
   await sql`DELETE FROM task_assignments WHERE "taskId" = ${id}`;
   await sql`DELETE FROM tasks WHERE id = ${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// Warehouses
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Dashboard helpers
+// ---------------------------------------------------------------------------
+
+export interface DashboardKpis {
+  totalProducts: number;
+  expiringCount: number;
+  lowStockCount: number;
+  healthyCount: number;
+}
+
+export async function getDashboardKpis(): Promise<DashboardKpis> {
+  await ready();
+  const [row] = await sql`
+    SELECT
+      COUNT(*)::int                                                   AS "totalProducts",
+      COUNT(*) FILTER (WHERE status = 'expiring')::int               AS "expiringCount",
+      COUNT(*) FILTER (WHERE status = 'low')::int                    AS "lowStockCount",
+      COUNT(*) FILTER (WHERE status = 'healthy')::int                AS "healthyCount"
+    FROM products
+  `;
+  return row as DashboardKpis;
+}
+
+export async function getRecentProducts(limit = 6): Promise<Product[]> {
+  await ready();
+  const rows = await sql`
+    SELECT * FROM products
+    ORDER BY "lastUpdated" DESC NULLS LAST
+    LIMIT ${limit}
+  `;
+  return rows as Product[];
+}
+
+// ---------------------------------------------------------------------------
+// Expiry alerts
+// ---------------------------------------------------------------------------
+
+export interface ExpiryAlertItem {
+  id: string;
+  product: string;
+  category: string;
+  batch: string;
+  expiryDate: string;
+  daysRemaining: number;
+  severity: "safe" | "warning" | "critical";
+}
+
+export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
+  await ready();
+  const rows = await sql`
+    SELECT
+      id,
+      name AS product,
+      category,
+      batch,
+      "expiryDate",
+      CASE
+        WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+        THEN ("expiryDate"::date - CURRENT_DATE)::int
+        ELSE 0
+      END AS "daysRemaining",
+      CASE
+        WHEN status = 'expired' THEN 'critical'
+        WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+          AND ("expiryDate"::date - CURRENT_DATE) <= 3 THEN 'critical'
+        ELSE 'warning'
+      END AS severity
+    FROM products
+    WHERE status IN ('expiring', 'expired')
+    ORDER BY
+      CASE WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+        THEN "expiryDate"::date END ASC NULLS LAST
+    LIMIT ${limit}
+  `;
+  return rows as ExpiryAlertItem[];
+}
+
+export async function getWarehouses(): Promise<Warehouse[]> {
+  await ready();
+  const rows = await sql`
+    SELECT
+      w.id, w.name, w.location, w.capacity, w.manager,
+      COUNT(p.id)::int AS products,
+      COALESCE(SUM(p.stock), 0)::int AS used
+    FROM warehouses w
+    LEFT JOIN products p ON p.warehouse = w.name
+    GROUP BY w.id, w.name, w.location, w.capacity, w.manager
+    ORDER BY w.id
+  `;
+  return rows.map((r) => ({ ...r, transfersPending: 0 })) as Warehouse[];
+}
+
+export async function createWarehouse(w: Pick<Warehouse, "id" | "name" | "location" | "capacity" | "manager">): Promise<Warehouse> {
+  await ready();
+  await sql`INSERT INTO warehouses (id, name, location, capacity, manager)
+            VALUES (${w.id}, ${w.name}, ${w.location ?? null}, ${w.capacity ?? 0}, ${w.manager ?? null})`;
+  const [row] = await getWarehouses().then((ws) => ws.filter((x) => x.id === w.id));
+  return row;
 }
 

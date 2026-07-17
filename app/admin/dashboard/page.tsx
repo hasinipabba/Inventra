@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { Topbar } from "@/components/topbar";
 import { StatusPill } from "@/components/ui/status-pill";
 import { HealthRing } from "@/components/ui/health-ring";
-import { products, expiryAlerts } from "@/lib/mock-data";
+import { getExpiryAlerts, getDashboardKpis, getRecentProducts } from "@/lib/db";
 import { ScanBarcode, PackagePlus, Upload, Download } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -16,12 +16,13 @@ const CategoryDonut = dynamic(
   { loading: () => null }
 );
 
-export default function DashboardPage() {
-  const recent = products.slice(0, 6);
-  const totalProducts = products.length;
-  const expiringCount = products.filter((p) => p.status === "expiring").length;
-  const lowStockCount = products.filter((p) => p.status === "low").length;
-  const safeCount = products.filter((p) => p.status === "healthy").length;
+export default async function DashboardPage() {
+  const [expiryAlerts, kpis, recent] = await Promise.all([
+    getExpiryAlerts(),
+    getDashboardKpis(),
+    getRecentProducts(6),
+  ]);
+  const { totalProducts, expiringCount, lowStockCount, healthyCount: safeCount } = kpis;
 
   const STAT_CARDS = [
     {

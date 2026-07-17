@@ -3,12 +3,12 @@ import type { ButtonHTMLAttributes } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "ghost" | "danger";
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }
 
 export function Button({ className, variant = "secondary", size = "md", ...props }: ButtonProps) {
   const base = "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50 disabled:pointer-events-none";
-  const sizes = { sm: "h-8 px-3 text-xs", md: "h-9 px-3.5 text-sm" };
+  const sizes = { sm: "h-8 px-3 text-xs", md: "h-9 px-3.5 text-sm", lg: "h-11 px-5 text-base" };
   const variants = {
     primary: "bg-primary text-primary-foreground hover:opacity-90",
     secondary: "bg-surface2 text-text hover:bg-border/60 border border-border",

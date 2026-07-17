@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Search, Plus, Pencil, Trash2, X, Loader2, AlertCircle, ImageIcon } from "lucide-react";
-import { warehouses } from "@/lib/mock-data";
 import type { Product, ProductStatus, Category } from "@/lib/types";
 import { StatusPill } from "@/components/ui/status-pill";
 import { HealthRing } from "@/components/ui/health-ring";
@@ -21,6 +20,7 @@ const STATUS_FILTERS: { label: string; value: ProductStatus | "all" }[] = [
 export function ProductsTable() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [warehouseNames, setWarehouseNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -41,11 +41,13 @@ export function ProductsTable() {
         if (!res.ok) throw new Error("Failed to load categories");
         return res.json() as Promise<Category[]>;
       }),
+      fetch("/api/warehouses").then((res) => res.ok ? res.json() as Promise<{ name: string }[]> : []),
     ])
-      .then(([productsData, categoriesData]) => {
+      .then(([productsData, categoriesData, warehousesData]) => {
         if (!cancelled) {
           setProducts(productsData);
           setCategories(categoriesData);
+          setWarehouseNames((warehousesData as { name: string }[]).map((w) => w.name));
         }
       })
       .catch(() => {
@@ -242,6 +244,7 @@ export function ProductsTable() {
         <ProductModal
           product={editing}
           categories={categories}
+          warehouseNames={warehouseNames}
           saving={saving}
           onClose={() => setModalOpen(false)}
           onSave={save}
@@ -254,12 +257,14 @@ export function ProductsTable() {
 function ProductModal({
   product,
   categories,
+  warehouseNames,
   saving,
   onClose,
   onSave,
 }: {
   product: Product | null;
   categories: Category[];
+  warehouseNames: string[];
   saving: boolean;
   onClose: () => void;
   onSave: (p: Product) => void;
@@ -274,7 +279,7 @@ function ProductModal({
       brand: "",
       batch: "",
       supplier: "",
-      warehouse: warehouses[0].name,
+      warehouse: warehouseNames[0] ?? "",
       shelf: "",
       stock: 0,
       minStock: 40,
@@ -311,7 +316,7 @@ function ProductModal({
           <Field label="Barcode" value={form.barcode} onChange={(v) => setForm({ ...form, barcode: v })} mono />
           <SelectField label="Category" value={form.category} options={categories.map((c) => c.name)} onChange={(v) => setForm({ ...form, category: v })} />
           <Field label="Brand" value={form.brand} onChange={(v) => setForm({ ...form, brand: v })} />
-          <SelectField label="Warehouse" value={form.warehouse} options={warehouses.map((w) => w.name)} onChange={(v) => setForm({ ...form, warehouse: v })} />
+          <SelectField label="Warehouse" value={form.warehouse} options={warehouseNames} onChange={(v) => setForm({ ...form, warehouse: v })} />
           <Field label="Shelf Location" value={form.shelf} onChange={(v) => setForm({ ...form, shelf: v })} />
           <Field label="Current Stock" type="number" value={String(form.stock)} onChange={(v) => setForm({ ...form, stock: Number(v) })} />
           <Field label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} />
