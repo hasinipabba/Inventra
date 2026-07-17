@@ -1,21 +1,50 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useEffect, useState, type MouseEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
+import { Menu, X } from "lucide-react";
 
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
-  { label: "Pricing", href: "#pricing" },
-  { label: "About", href: "#about" },
+  { label: "Workflow", href: "#workflow" },
+  { label: "Solutions", href: "#solutions" },
+  { label: "Contact", href: "#contact" },
 ];
 
+const NAV_HEIGHT = 88; // px — used to offset smooth-scroll targets under the fixed navbar
+
 export default function Navbar() {
+  const [scrolled, setScrolled] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const scrollToSection = (e: MouseEvent<HTMLAnchorElement>, href: string) => {
+    e.preventDefault();
+    setMobileOpen(false);
+    const id = href.replace("#", "");
+    const el = document.getElementById(id);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY - NAV_HEIGHT;
+    window.scrollTo({ top, behavior: "smooth" });
+  };
+
   return (
     <motion.header
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.7, ease: "easeOut" }}
-      className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-6 py-6 md:px-10 md:py-8"
+      className={`fixed inset-x-0 top-0 z-50 flex items-center justify-between px-6 transition-all duration-300 md:px-10 ${
+        scrolled
+          ? "border-b border-white/10 bg-[#0a0b0d]/75 py-4 backdrop-blur-xl md:py-5"
+          : "border-b border-transparent bg-transparent py-6 md:py-8"
+      }`}
     >
       {/* Logo */}
       <Link href="/" className="flex items-center gap-2.5">
@@ -46,27 +75,68 @@ export default function Navbar() {
         </span>
       </Link>
 
-      {/* Right side links */}
+      {/* Desktop links */}
       <nav className="flex items-center gap-1 md:gap-2">
         <ul className="hidden items-center gap-8 pr-6 md:flex">
           {NAV_LINKS.map((link) => (
             <li key={link.label}>
-              <Link
+              <a
                 href={link.href}
+                onClick={(e) => scrollToSection(e, link.href)}
                 className="text-[13.5px] font-medium text-white/70 transition-colors duration-200 hover:text-white"
               >
                 {link.label}
-              </Link>
+              </a>
             </li>
           ))}
         </ul>
         <Link
           href="/login"
-          className="rounded-full border border-white/15 bg-white/[0.06] px-4 py-2 text-[13.5px] font-medium text-white backdrop-blur-sm transition-colors duration-200 hover:bg-white/[0.12]"
+          className="hidden rounded-full border border-white/15 bg-white/[0.06] px-4 py-2 text-[13.5px] font-medium text-white backdrop-blur-sm transition-colors duration-200 hover:bg-white/[0.12] md:inline-block"
         >
           Login
         </Link>
+
+        {/* Mobile menu toggle */}
+        <button
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label="Toggle menu"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-white backdrop-blur-sm md:hidden"
+        >
+          {mobileOpen ? <X size={16} /> : <Menu size={16} />}
+        </button>
       </nav>
+
+      {/* Mobile dropdown */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="absolute inset-x-4 top-full mt-2 flex flex-col gap-1 rounded-2xl border border-white/10 bg-[#0a0b0d]/90 p-3 backdrop-blur-xl md:hidden"
+          >
+            {NAV_LINKS.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                onClick={(e) => scrollToSection(e, link.href)}
+                className="rounded-xl px-4 py-2.5 text-[14px] font-medium text-white/80 transition-colors duration-200 hover:bg-white/[0.06] hover:text-white"
+              >
+                {link.label}
+              </a>
+            ))}
+            <Link
+              href="/login"
+              onClick={() => setMobileOpen(false)}
+              className="mt-1 rounded-xl border border-white/15 bg-white/[0.06] px-4 py-2.5 text-center text-[14px] font-medium text-white"
+            >
+              Login
+            </Link>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.header>
   );
 }
