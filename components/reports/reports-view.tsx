@@ -94,7 +94,7 @@ export function ReportsView() {
               {warehouses.map((w) => (
                 <tr key={w.id} className="border-t border-border">
                   <td className="py-2.5">{w.name}</td>
-                  <td className="py-2.5">{Math.round((w.used / w.capacity) * 100)}%</td>
+                  <td className="py-2.5">{Math.round((w.used / (w.capacity || 1)) * 100)}%</td>
                   <td className="py-2.5">{w.transfersPending}</td>
                 </tr>
               ))}

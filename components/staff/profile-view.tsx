@@ -19,6 +19,7 @@ export function ProfileView() {
     fetch("/api/auth/me")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setUser(data?.user ?? null))
+      .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
 

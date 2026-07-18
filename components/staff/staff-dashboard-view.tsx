@@ -15,15 +15,18 @@ export function StaffDashboardView() {
   useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setName(data?.user?.name ?? ""));
+      .then((data) => setName(data?.user?.name ?? ""))
+      .catch(() => {});
 
     fetch("/api/tasks")
       .then((res) => (res.ok ? res.json() : []))
-      .then(setTasks);
+      .then(setTasks)
+      .catch(() => {});
 
     fetch("/api/attendance/status")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setToday(data?.record ?? null));
+      .then((data) => setToday(data?.record ?? null))
+      .catch(() => {});
   }, []);
 
   const pendingTasks = tasks.filter((t) => t.status !== "completed").length;

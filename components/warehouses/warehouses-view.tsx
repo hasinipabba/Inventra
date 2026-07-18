@@ -15,14 +15,37 @@ function heatColor(pct: number) {
 
 export function WarehousesView() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    fetch("/api/warehouses").then((r) => r.json()).then(setWarehouses).catch(() => {});
+    fetch("/api/warehouses")
+      .then((r) => r.json())
+      .then(setWarehouses)
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
+
+  if (!loading && warehouses.length === 0) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "400px",
+          color: "var(--text-2)",
+          fontSize: "14px",
+        }}
+      >
+        No warehouses found. Add a warehouse to get started.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {warehouses.map((w) => {
-          const pct = Math.round((w.used / w.capacity) * 100);
+          const pct = Math.round((w.used / (w.capacity || 1)) * 100);
           return (
             <Card key={w.id} className="p-5">
               <div className="flex items-start justify-between">
@@ -72,13 +95,15 @@ export function WarehousesView() {
         <h2 className="mb-1 font-display text-sm font-semibold">Warehouse Heat Map</h2>
         <p className="mb-4 text-xs text-muted">Capacity utilization at a glance — darker means fuller</p>
         <div className="grid grid-cols-4 gap-2 sm:grid-cols-8 md:grid-cols-12">
-          {Array.from({ length: 48 }).map((_, i) => {
-            const w = warehouses[i % warehouses.length];
-            const base = Math.round((w.used / w.capacity) * 100);
-            const jitter = (i * 13) % 20;
-            const pct = Math.max(10, Math.min(100, base - 10 + jitter));
-            return <div key={i} className={cn("h-6 w-full rounded-sm", heatColor(pct))} style={{ opacity: 0.35 + pct / 150 }} title={`${pct}%`} />;
-          })}
+          {warehouses.length > 0 &&
+            Array.from({ length: 48 }).map((_, i) => {
+              const w = warehouses[i % warehouses.length];
+              if (!w || !w.capacity) return null;
+              const base = Math.round((w.used / w.capacity) * 100);
+              const jitter = (i * 13) % 20;
+              const pct = Math.max(10, Math.min(100, base - 10 + jitter));
+              return <div key={i} className={cn("h-6 w-full rounded-sm", heatColor(pct))} style={{ opacity: 0.35 + pct / 150 }} title={`${pct}%`} />;
+            })}
         </div>
         <div className="mt-4 flex items-center gap-4 text-xs text-muted">
           <LegendDot color="bg-healthy" label="< 50%" />

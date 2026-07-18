@@ -19,9 +19,8 @@ export default function BackgroundVideo({
     const playVideo = async () => {
       try {
         await video.play();
-        console.log("✅ Video started");
-      } catch (err) {
-        console.error("❌ Autoplay failed", err);
+      } catch {
+        // Autoplay can be blocked by the browser; the video simply stays paused.
       }
     };
 

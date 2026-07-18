@@ -114,6 +114,13 @@ export function UsersView() {
                   </td>
                 </tr>
               )}
+              {!loading && users.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-xs text-muted">
+                    No users yet.
+                  </td>
+                </tr>
+              )}
               {!loading &&
                 users.map((u) => (
                   <tr key={u.id} className="border-t border-border hover:bg-surface2/50">

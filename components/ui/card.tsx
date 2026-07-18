@@ -3,7 +3,7 @@ import type { LucideIcon } from "lucide-react";
 
 export function Card({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("glass-card shadow-card transition-shadow duration-200", className)}>
+    <div className={cn("glass-card card-hover shadow-card transition-shadow duration-200", className)}>
       {children}
     </div>
   );

@@ -1,22 +1,46 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
 import { useToast } from "@/lib/toast-context";
+import { ThemeToggle } from "@/components/theme-toggle";
 
-const TABS = ["Company Profile", "Notifications", "Roles & Permissions", "Integrations"] as const;
+const TABS = ["Account", "Company Profile", "Notifications", "Appearance", "Roles & Permissions", "Integrations"] as const;
+
+interface SessionUser {
+  name: string;
+  role: string;
+}
 
 type NotificationPrefs = { lowStock: boolean; expiry: boolean; transfers: boolean; aiDigest: boolean };
 const DEFAULT_PREFS: NotificationPrefs = { lowStock: true, expiry: true, transfers: true, aiDigest: false };
 
 export function SettingsView() {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Company Profile");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Account");
   const [toggles, setToggles] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [loading, setLoading] = useState(true);
+  const [isDark, setIsDark] = useState(true);
+  const [user, setUser] = useState<SessionUser | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setUser(data?.user ?? null))
+      .catch(() => setUser(null));
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    setIsDark(root.classList.contains("dark"));
+    const observer = new MutationObserver(() => setIsDark(root.classList.contains("dark")));
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +93,28 @@ export function SettingsView() {
       </nav>
 
       <div className="flex-1">
+        {tab === "Account" && (
+          <div className="space-y-4">
+            <Card className="max-w-xl space-y-3 p-5">
+              <div>
+                <p className="text-xs font-medium text-muted">Name</p>
+                <p className="text-sm">{user?.name ?? "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted">Role</p>
+                <p className="text-sm">{user?.role ?? "—"}</p>
+              </div>
+            </Card>
+            <Link
+              href="/admin/warehouses"
+              className="flex max-w-xl items-center justify-between rounded-xl2 border border-border bg-surface p-5 text-sm font-medium transition-colors hover:bg-surface2/60"
+            >
+              Manage warehouses
+              <ArrowRight size={16} className="text-muted" />
+            </Link>
+          </div>
+        )}
+
         {tab === "Company Profile" && (
           <Card className="max-w-xl space-y-4 p-5">
             <Field label="Company Name" defaultValue="Inventra Retail Pvt. Ltd." />
@@ -105,6 +151,18 @@ export function SettingsView() {
                   />
                 </div>
               ))}
+          </Card>
+        )}
+
+        {tab === "Appearance" && (
+          <Card className="max-w-xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Theme</p>
+                <p className="text-xs text-muted">Currently using {isDark ? "dark" : "light"} mode.</p>
+              </div>
+              <ThemeToggle />
+            </div>
           </Card>
         )}
 

@@ -112,6 +112,13 @@ export function ProcurementView() {
                   </td>
                 </tr>
               )}
+              {!loading && requests.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-xs text-muted">
+                    No purchase requests yet.
+                  </td>
+                </tr>
+              )}
               {!loading &&
                 requests.map((r) => (
                   <tr key={r.id} className="border-t border-border hover:bg-surface2/50">

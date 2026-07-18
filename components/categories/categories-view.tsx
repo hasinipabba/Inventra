@@ -104,7 +104,11 @@ export function CategoriesView() {
         </div>
       )}
 
-      {!loading && (
+      {!loading && categories.length === 0 && (
+        <p className="py-10 text-center text-xs text-muted">No categories yet. Create one to get started.</p>
+      )}
+
+      {!loading && categories.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {categories.map((c) => (
             <Card key={c.id} className="p-5">
