@@ -143,6 +143,24 @@ body {
   background-size: 18px 18px;
 }
 
+/* Sidebar nav group collapse/expand (grid-template-rows trick, no JS animation) */
+.sidebar-group-items {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.18s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+.sidebar-group-items.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  pointer-events: auto;
+}
+.sidebar-group-items > div {
+  overflow: hidden;
+}
+
 /* Sidebar collapsible group animation */
 .nav-group-items {
   display: grid;
