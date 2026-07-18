@@ -11,23 +11,73 @@
   --muted: 100 112 134;
   --primary: 59 130 246;
   --primary-fg: 255 255 255;
+
+  /* Semantic surface/text variables used by the redesigned admin dashboard
+     shell (sidebar, topbar, cards). Kept as literal hex — unlike the vars
+     above, they're consumed directly via var(...), never wrapped in rgb(). */
+  --text-2: #555555;
+  --text-3: #999999;
+  --card-bg: #FFFFFF;
+  --card-border: #E8E8E8;
+  --sidebar-bg: #FAFAFA;
+  --sidebar-border: #EEEEEE;
+  --sidebar-text: #888888;
+  --sidebar-active-bg: #F0F0F0;
+  --sidebar-active-text: #0A0A0A;
+  --sidebar-hover-bg: #F5F5F5;
+  --sidebar-hover-text: #333333;
+  --topbar-bg: #FFFFFF;
+  --topbar-border: #EEEEEE;
+  --input-bg: #F5F5F5;
 }
 
+html.dark,
 .dark {
   --bg: 0 0 0;
-  --surface: 10 10 10;
-  --surface-2: 18 18 18;
+  --surface: 22 22 22;
+  --surface-2: 28 28 28;
   --border: 38 38 38;
   --text: 237 237 237;
   --muted: 115 115 115;
   --primary: 47 129 247;
   --primary-fg: 255 255 255;
+
+  --text-2: #888888;
+  --text-3: #555555;
+  --card-bg: #161616;
+  --card-border: #1E1E1E;
+  --sidebar-bg: #0D0D0D;
+  --sidebar-border: #1A1A1A;
+  --sidebar-text: #444444;
+  --sidebar-active-bg: #1A1A1A;
+  --sidebar-active-text: #FFFFFF;
+  --sidebar-hover-bg: #141414;
+  --sidebar-hover-text: #777777;
+  --topbar-bg: #0D0D0D;
+  --topbar-border: #1A1A1A;
+  --input-bg: #111111;
 }
-.dark body {
-  background-color: #000000;
+
+html.dark body {
+  background:
+    radial-gradient(ellipse at 0% 100%, rgba(30,58,138,0.5) 0%, transparent 55%),
+    radial-gradient(ellipse at 100% 0%, rgba(15,23,42,0.65) 0%, transparent 45%),
+    #000000;
+  min-height: 100vh;
 }
 html.dark {
   background-color: #000000;
+}
+
+.dark main {
+  background: transparent;
+}
+
+.dark table,
+.dark thead,
+.dark tbody,
+.dark tr {
+  background: transparent;
 }
 
 * {
@@ -48,10 +98,20 @@ body {
   background-color: rgb(var(--bg));
   color: rgb(var(--text));
   overscroll-behavior: none;
+  min-height: 100vh;
 }
 
 ::selection {
   background-color: rgb(var(--primary) / 0.25);
+}
+
+.page-loading {
+  opacity: 0;
+  animation: page-appear 0.3s ease-out 0.1s forwards;
+}
+@keyframes page-appear {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .scrollbar-thin::-webkit-scrollbar {
@@ -64,19 +124,75 @@ body {
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 12px;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
-.dark .glass-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+.dark .glass-card,
+.dark [class~="bg-surface"],
+.dark [class~="bg-surface2"] {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
 }
 
 /* subtle grid texture used behind the KPI hero */
 .grid-texture {
   background-image: radial-gradient(rgb(var(--border)) 1px, transparent 1px);
   background-size: 18px 18px;
+}
+
+/* Sidebar collapsible group animation */
+.nav-group-items {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease;
+  opacity: 0;
+}
+.nav-group-items.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.nav-group-items > div {
+  overflow: hidden;
+}
+
+.chevron {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.chevron.open {
+  transform: rotate(90deg);
+}
+
+/* Page transition on route change */
+main { animation: page-enter 0.2s ease-out both; }
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Sidebar nav item hover */
+.sb-item { transition: background 0.15s ease, color 0.15s ease,
+            padding-left 0.15s ease; }
+.sb-item:hover { padding-left: 14px; }
+
+/* Card hover lift */
+.card-hover { transition: border-color 0.2s ease; }
+.card-hover:hover { border-color: rgba(255,255,255,0.15); }
+
+/* Theme toggle transition (View Transitions API) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
 }

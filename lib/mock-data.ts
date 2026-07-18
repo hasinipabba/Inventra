@@ -1,3 +1,12 @@
+// Still depended on by live pages (audited — see PART 3 of the codebase audit):
+//   - aiInsights      → app/admin/ai-insights/page.tsx (no AI-insight DB layer exists yet)
+//   - categories      → components/charts/category-donut.tsx (dashboard + analytics; no DB category-distribution query exists yet)
+//   - expiryTimeline  → components/charts/expiry-timeline-chart.tsx (analytics page; no DB weekly-expiry-bucket query exists yet)
+//   - warehouses      → app/admin/tasks/page.tsx, components/reports/reports-view.tsx (lib/db.ts already has real warehouse data used by app/admin/warehouses/page.tsx — these two call sites should switch to that instead)
+//   - kpis            → components/reports/reports-view.tsx (dashboard already computes real KPIs via getDashboardKpis() — Reports should reuse that instead)
+//   - suppliers       → components/reports/reports-view.tsx (real supplier data already exists via /api/suppliers — Reports should call that instead)
+// Everything else exported below is unused (only referenced by orphaned, never-imported
+// components/dashboard/* files that were removed in this audit) and can be deleted freely.
 import type {
   Product,
   Category,

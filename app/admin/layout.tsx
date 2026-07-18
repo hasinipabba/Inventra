@@ -25,9 +25,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (session.role !== "Admin") redirect("/staff/dashboard");
 
   return (
-    <div className="flex min-h-screen bg-bg dark:bg-black">
+    <div className="flex min-h-screen">
       <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col scroll-smooth">{children}</div>
+      <div className="page-loading flex min-w-0 flex-1 flex-col scroll-smooth">{children}</div>
       <AIAssistant />
       <PushListener />
     </div>

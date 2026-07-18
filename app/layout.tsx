@@ -26,7 +26,30 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`dark ${display.variable} ${body.variable} ${mono.variable}`}>
+    <html
+      lang="en"
+      className={`${display.variable} ${body.variable} ${mono.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try {
+              var t = localStorage.getItem('theme');
+              if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+              }
+            } catch (e) {}
+            window.addEventListener('unhandledrejection', function (e) {
+              var msg = e.reason && e.reason.message ? e.reason.message : '';
+              if (msg.indexOf('NetworkError') !== -1 || msg.indexOf('Failed to fetch') !== -1) {
+                console.warn('Unhandled network error suppressed:', e.reason);
+                e.preventDefault();
+              }
+            });`,
+          }}
+        />
+      </head>
       <body className="font-body antialiased">
         <ToastProvider>{children}</ToastProvider>
       </body>

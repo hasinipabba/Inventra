@@ -55,9 +55,6 @@ export function NotificationsView() {
       cancelled = true;
     };
   }, []);
-  useEffect(() => {
-  console.log(items);
-}, [items]);
 
   async function markOne(id: string) {
     const item = items.find((n) => n.id === id);
@@ -90,8 +87,7 @@ export function NotificationsView() {
         )}
         {!loading && items.length === 0 && <p className="px-5 py-10 text-center text-xs text-muted">You're all caught up.</p>}
         {!loading &&
-          items.slice(0, 30).map((n)=> {
-            console.log("Notification category:", n.category);
+          items.slice(0, 30).map((n) => {
             const Icon = ICONS[n.category] ?? Bell;
             return (
               <button

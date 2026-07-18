@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Bell, CheckCheck, Loader2 } from "lucide-react";
+import { Bell, CheckCheck, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "./theme-toggle";
@@ -46,7 +46,7 @@ export function Topbar({ title }: { title: string }) {
     refresh();
     // Poll periodically so new alerts (low stock, approvals, check-ins…)
     // show up here without needing a manual refresh.
-    const interval = setInterval(refresh, 5000);
+    const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -77,17 +77,9 @@ export function Topbar({ title }: { title: string }) {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-4 border-b border-border bg-surface/80 px-4 backdrop-blur md:px-6">
-      <h1 className="font-display text-base font-semibold tracking-tight">{title}</h1>
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-4 border-b border-[var(--topbar-border)] bg-[var(--topbar-bg)] px-4 md:px-6">
+      <h1 className="text-[15px] font-medium text-[var(--text)]">{title}</h1>
       <div className="flex flex-1 items-center justify-end gap-2">
-        <div className="relative hidden max-w-xs flex-1 sm:block">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            placeholder="Search products, SKUs, suppliers…"
-            className="h-9 w-full rounded-lg border border-border bg-surface2 pl-9 pr-3 text-sm outline-none placeholder:text-muted focus:border-primary"
-          />
-        </div>
-
         <div className="relative" ref={panelRef}>
           <button
             onClick={() => setOpen((v) => !v)}
@@ -95,7 +87,7 @@ export function Topbar({ title }: { title: string }) {
           >
             <Bell size={17} className={cn(unread > 0 && "animate-wiggle")} />
             {unread > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-out px-1 text-[10px] font-semibold text-white ring-2 ring-surface">
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#F85149] px-1 text-[10px] font-semibold text-white ring-2 ring-[var(--topbar-bg)]">
                 {unread > 9 ? "9+" : unread}
               </span>
             )}
