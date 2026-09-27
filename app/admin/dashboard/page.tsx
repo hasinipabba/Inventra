@@ -5,13 +5,16 @@ import { HealthRing } from "@/components/ui/health-ring";
 import { getExpiryAlerts, getDashboardKpis, getRecentProducts } from "@/lib/db";
 import { ScanBarcode, PackagePlus, Upload, Download, Package, AlertTriangle, TrendingDown, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 
-const InventoryHealthChart = dynamic(
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const InventoryHealthChart = nextDynamic(
   () => import("@/components/charts/inventory-health-chart").then((m) => ({ default: m.InventoryHealthChart })),
   { loading: () => null }
 );
-const CategoryDonut = dynamic(
+const CategoryDonut = nextDynamic(
   () => import("@/components/charts/category-donut").then((m) => ({ default: m.CategoryDonut })),
   { loading: () => null }
 );

@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { listProducts, pushNotification, findProductByBarcode, upsertProductByBarcode } from "@/lib/db";
 import type { Product } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     return NextResponse.json(await listProducts());
