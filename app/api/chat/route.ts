@@ -1,66 +1,176 @@
 import Groq from "groq-sdk";
-import { sql } from "@/lib/pg";
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+import { listProducts, getWarehouses, listPurchaseRequests } from "@/lib/db";
+import {
+  products as seedProducts,
+  warehouses as seedWarehouses,
+  purchaseRequests as seedPurchaseRequests,
+} from "@/lib/mock-data";
 
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    const [products, warehouses, procurement, expiring] = await Promise.all([
-      sql`SELECT name, sku, stock, status, "expiryDate", warehouse, category
-          FROM products
-          ORDER BY "lastUpdated" DESC NULLS LAST
-          LIMIT 100`,
-      sql`SELECT id, name, location FROM warehouses`,
-      sql`SELECT product, quantity, status, date
-          FROM purchase_requests
-          WHERE LOWER(status) = 'pending'
-          LIMIT 20`,
-      sql`SELECT name, sku, "expiryDate", stock, warehouse
-          FROM products
-          WHERE "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-            AND "expiryDate"::date <= CURRENT_DATE + INTERVAL '7 days'
-            AND "expiryDate"::date > CURRENT_DATE
-          ORDER BY "expiryDate"::date ASC
-          LIMIT 20`,
-    ]);
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return Response.json(
+        { error: "Invalid request: messages array is required." },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.GROQ_API_KEY?.trim();
+    if (!apiKey) {
+      return Response.json(
+        {
+          error:
+            "GROQ_API_KEY is not configured on the server. Please add your Groq API key to your environment variables (.env.local or .env).",
+        },
+        { status: 503 }
+      );
+    }
+
+    // Attempt to load live data through DB layer (which ensures schema initialization via ready()).
+    // Fall back to seed mock data if database is unreachable or unconfigured.
+    let productsList: Array<{
+      name: string;
+      sku?: string;
+      stock?: number;
+      status?: string;
+      expiryDate?: string;
+      warehouse?: string;
+      category?: string;
+    }> = [];
+    let warehousesList: Array<{ id: string; name: string; location?: string }> = [];
+    let pendingProcurement: Array<{ product?: string; quantity?: number; date?: string }> = [];
+
+    try {
+      const [dbProducts, dbWarehouses, dbRequests] = await Promise.all([
+        listProducts(),
+        getWarehouses(),
+        listPurchaseRequests(),
+      ]);
+      productsList = dbProducts;
+      warehousesList = dbWarehouses;
+      pendingProcurement = dbRequests.filter(
+        (r) => (r.status || "").toLowerCase() === "pending"
+      );
+    } catch (dbErr) {
+      console.warn("Unable to fetch live database context for chat, falling back to seed data:", dbErr);
+      productsList = seedProducts;
+      warehousesList = seedWarehouses;
+      pendingProcurement = seedPurchaseRequests.filter(
+        (r) => (r.status || "").toLowerCase() === "pending"
+      );
+    }
+
+    // Safely compute products expiring within 7 days
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const expiringSoon = productsList.filter((p) => {
+      if (!p.expiryDate) return false;
+      const d = new Date(p.expiryDate);
+      return !isNaN(d.getTime()) && d >= now && d <= in7Days;
+    });
+
+    const recentProducts = productsList.slice(0, 100);
 
     const context = `
 You are Inventra AI, an inventory management assistant. You have access to live inventory data. Answer questions based only on this data. Be concise and specific.
 
 CURRENT INVENTORY SUMMARY:
-Total products: ${products.length}
-Low stock: ${products.filter((p) => p.status === "low").length}
-Out of stock: ${products.filter((p) => p.status === "out").length}
-Expiring in 7 days: ${expiring.length}
+Total products: ${productsList.length}
+Low stock: ${productsList.filter((p) => p.status === "low").length}
+Out of stock: ${productsList.filter((p) => p.status === "out").length}
+Expiring in 7 days: ${expiringSoon.length}
 
 WAREHOUSES:
-${warehouses.map((w) => `- ${w.name} (${w.location})`).join("\n")}
+${warehousesList.map((w) => `- ${w.name}${w.location ? ` (${w.location})` : ""}`).join("\n")}
 
-PRODUCTS (recent 100):
-${products.map((p) => `- ${p.name} | SKU: ${p.sku} | Qty: ${p.stock} | Status: ${p.status} | Expiry: ${p.expiryDate ?? "N/A"} | Warehouse: ${p.warehouse} | Category: ${p.category}`).join("\n")}
+PRODUCTS (recent ${recentProducts.length}):
+${recentProducts
+  .map(
+    (p) =>
+      `- ${p.name} | SKU: ${p.sku ?? "N/A"} | Qty: ${p.stock ?? 0} | Status: ${p.status ?? "in"} | Expiry: ${
+        p.expiryDate ?? "N/A"
+      } | Warehouse: ${p.warehouse ?? "Unassigned"} | Category: ${p.category ?? "General"}`
+  )
+  .join("\n")}
 
 EXPIRING SOON:
-${expiring.length === 0 ? "None" : expiring.map((p) => `- ${p.name} | SKU: ${p.sku} | Expires: ${p.expiryDate} | Qty: ${p.stock}`).join("\n")}
+${
+  expiringSoon.length === 0
+    ? "None"
+    : expiringSoon
+        .map((p) => `- ${p.name} | SKU: ${p.sku ?? "N/A"} | Expires: ${p.expiryDate} | Qty: ${p.stock ?? 0}`)
+        .join("\n")
+}
 
 PENDING PURCHASE REQUESTS:
-${procurement.length === 0 ? "None" : procurement.map((p) => `- ${p.product} | Qty requested: ${p.quantity} | Date: ${p.date}`).join("\n")}
-    `.trim();
+${
+  pendingProcurement.length === 0
+    ? "None"
+    : pendingProcurement
+        .map((p) => `- ${p.product ?? "Unknown item"} | Qty requested: ${p.quantity ?? 0} | Date: ${p.date ?? "N/A"}`)
+        .join("\n")
+}
+`.trim();
 
-    const completion = await groq.chat.completions.create({
-      model: "llama3-70b-8192",
-      messages: [
-        { role: "system", content: context },
-        ...messages,
-      ],
-      max_tokens: 1024,
-      temperature: 0.3,
-    });
+    const groq = new Groq({ apiKey });
 
-    return Response.json({ message: completion.choices[0].message.content });
-  } catch (err) {
-    console.error("POST /api/chat failed:", err);
-    return Response.json({ error: "Failed to get a response. Please try again." }, { status: 500 });
+    // Candidate models to try in priority order
+    const candidateModels = Array.from(
+      new Set(
+        [
+          process.env.GROQ_MODEL,
+          "openai/gpt-oss-120b",
+          "openai/gpt-oss-20b",
+          "llama-3.3-70b-versatile",
+          "llama-3.1-8b-instant",
+        ].filter((m): m is string => Boolean(m && m.trim()))
+      )
+    );
+
+    let lastError: unknown = null;
+    let completionText: string | null = null;
+
+    for (const model of candidateModels) {
+      try {
+        const completion = await groq.chat.completions.create({
+          model,
+          messages: [{ role: "system", content: context }, ...messages],
+          max_tokens: 1024,
+          temperature: 0.3,
+        });
+
+        completionText = completion.choices[0]?.message?.content ?? null;
+        if (completionText) break;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Groq completion failed with model ${model}:`, err?.message || err);
+        // Continue to try next candidate if model not found or decommissioned
+        if (err?.status === 404 || err?.status === 400 || err?.code === "model_not_found") {
+          continue;
+        }
+        // If it's a rate limit or auth error, don't keep hammering
+        break;
+      }
+    }
+
+    if (completionText) {
+      return Response.json({ message: completionText });
+    }
+
+    console.error("All Groq model attempts failed. Last error:", lastError);
+    const errorMessage =
+      (lastError as any)?.error?.message ||
+      (lastError as any)?.message ||
+      "Failed to get a response from the AI model. Please try again.";
+
+    return Response.json({ error: errorMessage }, { status: 500 });
+  } catch (err: any) {
+    console.error("POST /api/chat unhandled failure:", err);
+    return Response.json(
+      { error: err?.message || "Failed to process chat request. Please try again." },
+      { status: 500 }
+    );
   }
 }

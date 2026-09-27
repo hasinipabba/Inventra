@@ -53,11 +53,26 @@ export function AIAssistant() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: apiMessages }),
       });
-      const data = await res.json();
-      const reply = res.ok ? (data.message ?? "No response.") : (data.error ?? "Something went wrong.");
-      setMsgs((m) => [...m, { role: "ai", text: reply }]);
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Fallback if response is non-JSON (e.g. gateway error or crash page)
+      }
+
+      if (res.ok && data?.message) {
+        setMsgs((m) => [...m, { role: "ai", text: data.message }]);
+      } else {
+        const errorMsg =
+          data?.error ||
+          (res.status === 503
+            ? "AI assistant is not configured. Please verify GROQ_API_KEY."
+            : `Error (${res.status}): Unable to get a response.`);
+        setMsgs((m) => [...m, { role: "ai", text: errorMsg }]);
+      }
     } catch {
-      setMsgs((m) => [...m, { role: "ai", text: "Network error — please try again." }]);
+      setMsgs((m) => [...m, { role: "ai", text: "Network error — please check your connection and try again." }]);
     } finally {
       setThinking(false);
     }
