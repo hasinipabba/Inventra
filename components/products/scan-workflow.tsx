@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, PackageSearch, RotateCcw, Save, ScanBarcode, Camera as CameraIcon, ImageUp, Keyboard, ScanText } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, PackageSearch, RotateCcw, Save, ScanBarcode, Camera as CameraIcon, ImageUp, Keyboard, ScanText, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Product } from "@/lib/types";
@@ -33,12 +33,14 @@ export function ScanWorkflow() {
     fetch("/api/warehouses").then((r) => r.json()).then((ws: { name: string }[]) => setWarehouseNames(ws.map((w) => w.name))).catch(() => {});
   }, []);
   const [ocrLowConfidence, setOcrLowConfidence] = useState<Set<string>>(new Set());
+  const [lastOcrText, setLastOcrText] = useState("");
   const [saving, setSaving] = useState(false);
 
   function reset() {
     setStage({ kind: "scanning" });
     setBatchForm(emptyBatch);
     setOcrLowConfidence(new Set());
+    setLastOcrText("");
   }
 
   async function handleDetected(barcode: string) {
@@ -274,6 +276,7 @@ export function ScanWorkflow() {
     const cleanedDigits = extraction.rawText.match(/\b(?:\d[\s-]?){8,14}\b/);
     const barcode = cleanedDigits ? cleanedDigits[0].replace(/[\s-]/g, "") : `OCR-${Date.now().toString().slice(-6)}`;
 
+    setLastOcrText(extraction.rawText || "");
     applyOcr(extraction);
     setStage({ kind: "looking_up", barcode });
 
@@ -304,15 +307,58 @@ export function ScanWorkflow() {
         });
         return;
       }
-      const ocrDraft = {
+
+      let ocrDraft: Partial<Product> = {
         name: extraction.fields.productName?.value || "",
         brand: extraction.fields.brand?.value || "",
         weight: extraction.fields.netWeight?.value || "",
       };
+      let aiSuccess = false;
+      let aiConfidence = 85;
+
+      if (extraction.rawText && extraction.rawText.trim().length > 15) {
+        try {
+          const aiRes = await fetch("/api/ai/parse-product", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rawText: extraction.rawText, barcode }),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json();
+            if (aiData.success && aiData.product) {
+              const p = aiData.product;
+              aiSuccess = true;
+              aiConfidence = p.confidence || 85;
+              ocrDraft = {
+                name: p.name || ocrDraft.name,
+                brand: p.brand || ocrDraft.brand,
+                category: p.category || "Packaged Foods",
+                weight: p.weight || ocrDraft.weight,
+                packageSize: p.packageSize || "",
+                description: p.description || "",
+                barcode,
+              };
+              setBatchForm((prev) => ({
+                ...prev,
+                batchNumber: p.batchNumber || prev.batchNumber,
+                mfgDate: p.mfgDate || prev.mfgDate,
+                expiryDate: p.expiryDate || prev.expiryDate,
+                mrp: p.mrp || prev.mrp,
+                netWeight: p.weight || prev.netWeight,
+              }));
+            }
+          }
+        } catch (e) {
+          console.warn("Direct OCR AI parsing fallback warning:", e);
+        }
+      }
+
       setStage({
         kind: "manual_entry",
         barcode,
-        reason: "Packaging label scanned via OCR. Review details and enter product name.",
+        reason: aiSuccess
+          ? `Packaging parsed with AI (${aiConfidence}% confidence). Review and click Save.`
+          : "Packaging label scanned via OCR. Review details and enter product name.",
         draft: ocrDraft,
       });
     } catch {
@@ -461,6 +507,7 @@ export function ScanWorkflow() {
             applyOcr={applyOcr}
             saving={saving}
             warehouseNames={warehouseNames}
+            lastOcrText={lastOcrText}
             onSaveNewProduct={(draft) => saveNewProductWithBatch(stage.kind === "new_product" ? stage.barcode : (stage as any).barcode, draft, stage.kind === "new_product" ? stage.sourceLabel : "manual")}
             onSaveBatch={(product) => saveBatch(product, (stage as any).barcode)}
           />
@@ -478,16 +525,18 @@ function BatchAndProductForm({
   applyOcr,
   saving,
   warehouseNames,
+  lastOcrText,
   onSaveNewProduct,
   onSaveBatch,
 }: {
   stage: Extract<Stage, { kind: "existing_product" | "manual_entry" | "new_product" }>;
   batchForm: typeof emptyBatch;
-  setBatchForm: (v: typeof emptyBatch) => void;
+  setBatchForm: React.Dispatch<React.SetStateAction<typeof emptyBatch>>;
   ocrLowConfidence: Set<string>;
   applyOcr: (extraction: OcrExtraction) => void;
   saving: boolean;
   warehouseNames: string[];
+  lastOcrText?: string;
   onSaveNewProduct: (draft: Partial<Product>) => void;
   onSaveBatch: (product: Product) => void;
 }) {
@@ -499,6 +548,72 @@ function BatchAndProductForm({
       : emptyDraft
   );
   const isNewOrManual = stage.kind === "new_product" || stage.kind === "manual_entry";
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiMessage, setAiMessage] = useState<{ text: string; confidence?: number; success: boolean } | null>(null);
+
+  useEffect(() => {
+    if (stage.kind === "manual_entry" && stage.draft) {
+      setDraft((d) => ({
+        ...d,
+        name: stage.draft?.name || d.name,
+        brand: stage.draft?.brand || d.brand,
+        category: stage.draft?.category || d.category,
+        weight: stage.draft?.weight || d.weight,
+        packageSize: stage.draft?.packageSize || d.packageSize,
+        description: stage.draft?.description || d.description,
+      }));
+    } else if (stage.kind === "new_product" && stage.draft) {
+      setDraft(stage.draft);
+    }
+  }, [stage]);
+
+  async function handleAiAutoFill() {
+    setAiLoading(true);
+    setAiMessage(null);
+    try {
+      const textToSend = lastOcrText || draft.name || "";
+      const res = await fetch("/api/ai/parse-product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawText: textToSend,
+          barcode: (stage as any).barcode || "",
+          draft,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "AI could not extract product details.");
+      }
+      const p = data.product;
+      setDraft((prev) => ({
+        ...prev,
+        name: p.name || prev.name,
+        brand: p.brand || prev.brand,
+        category: p.category || prev.category,
+        packageSize: p.packageSize || prev.packageSize,
+        weight: p.weight || prev.weight,
+        description: p.description || prev.description,
+      }));
+      setBatchForm((prev) => ({
+        ...prev,
+        mrp: p.mrp || prev.mrp,
+        netWeight: p.weight || prev.netWeight,
+        mfgDate: p.mfgDate || prev.mfgDate,
+        expiryDate: p.expiryDate || prev.expiryDate,
+        batchNumber: p.batchNumber || prev.batchNumber,
+      }));
+      setAiMessage({
+        success: true,
+        text: `Auto-filled by Groq AI (${p.confidence}% confidence) — ${p.name || "Product details extracted"}`,
+        confidence: p.confidence,
+      });
+    } catch (err: any) {
+      setAiMessage({ success: false, text: err?.message || "Failed to auto-fill with AI." });
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   const inputClass = (field: string) =>
     `h-9 w-full rounded-lg border bg-surface2 px-3 text-sm outline-none focus:border-primary ${
@@ -569,6 +684,42 @@ function BatchAndProductForm({
       )}
       {stage.kind === "manual_entry" && (
         <div className="rounded-lg border border-low/30 bg-low/10 p-2.5 text-sm text-low">{stage.reason} Enter details manually.</div>
+      )}
+
+      {/* Groq AI Auto-Fill action banner */}
+      {isNewOrManual && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#8B5CF6]/30 bg-[#8B5CF6]/10 p-3">
+          <div className="flex items-center gap-2 text-xs text-[#C4B5FD]">
+            <Sparkles size={16} className="text-[#A78BFA] shrink-0" />
+            <span>
+              <strong>AI Auto-Fill (Groq):</strong> Automatically extract product name, brand, category, MRP, net weight & dates.
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="shrink-0 border-[#8B5CF6]/50 bg-[#8B5CF6]/20 text-white hover:bg-[#8B5CF6]/30 font-medium"
+            disabled={aiLoading}
+            onClick={handleAiAutoFill}
+          >
+            {aiLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            {aiLoading ? "Analyzing packaging..." : "Auto-Fill with AI"}
+          </Button>
+        </div>
+      )}
+
+      {aiMessage && (
+        <div
+          className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs font-medium ${
+            aiMessage.success
+              ? "border-healthy/30 bg-healthy/10 text-healthy"
+              : "border-low/30 bg-low/10 text-low"
+          }`}
+        >
+          {aiMessage.success ? <CheckCircle2 size={14} className="shrink-0" /> : <AlertCircle size={14} className="shrink-0" />}
+          <span>{aiMessage.text}</span>
+        </div>
       )}
 
       {isNewOrManual && (

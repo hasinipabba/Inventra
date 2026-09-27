@@ -26,6 +26,7 @@ import type {
   Warehouse,
 } from "./types";
 import { calculateProductHealth, applyProductHealth, getDaysUntilExpiry } from "./product-health";
+import { INDIAN_RETAIL_MASTER_CATALOG } from "./catalog-seeds";
 
 export interface NotificationPrefs {
   lowStock: boolean;
@@ -213,6 +214,7 @@ async function initSchema() {
   )`;
 
   await seedIfEmpty();
+  await seedRetailMasterCatalog().catch((err) => console.warn("seedRetailMasterCatalog error:", err));
   await syncInventoryHealthDb();
 }
 
@@ -319,6 +321,55 @@ async function seedIfEmpty() {
       )
     );
   }
+}
+
+export async function seedRetailMasterCatalog(): Promise<number> {
+  let insertedCount = 0;
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const item of INDIAN_RETAIL_MASTER_CATALOG) {
+    const existing = await sql`SELECT id FROM products WHERE TRIM(barcode) = ${item.barcode.trim()} LIMIT 1`;
+    if (existing.length === 0) {
+      const stock = 100;
+      const health = calculateProductHealth({
+        stock,
+        minStock: item.minStock,
+        expiryDate: item.expiryDate,
+      });
+      const id = `prod-seed-${item.barcode}`;
+      await sql`
+        INSERT INTO products (
+          id, name, sku, barcode, category, brand, batch, supplier, warehouse, shelf,
+          stock, "minStock", "maxStock", unit, "mfgDate", "expiryDate", "lastRestocked",
+          "lastUpdated", "healthScore", status, image, description, "packageSize", weight,
+          manufacturer, "modelNumber", "qrCode", source
+        )
+        VALUES (
+          ${id}, ${item.name}, ${item.sku}, ${item.barcode}, ${item.category}, ${item.brand},
+          ${item.batch}, ${item.supplier}, ${item.warehouse}, ${item.shelf}, ${stock},
+          ${item.minStock}, ${item.maxStock}, ${item.unit}, ${item.mfgDate}, ${item.expiryDate},
+          ${today}, ${today}, ${health.healthScore}, ${health.status}, ${item.image || ""},
+          ${item.description || null}, ${item.packageSize || null}, ${item.weight || null},
+          ${item.manufacturer || null}, ${null}, ${null}, ${item.source || "database"}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+      insertedCount++;
+    }
+  }
+
+  // Ensure 'Personal Care' category exists for Indian FMCG categories
+  await sql`
+    INSERT INTO categories (id, name, "productCount", "totalStock", color)
+    VALUES ('cat-7', 'Personal Care', 0, 0, '#EC4899')
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  if (insertedCount > 0) {
+    await recalcCategoryCounts();
+  }
+
+  return insertedCount;
 }
 
 // Adds a fresh alert to the notification feed — used so real actions (low
