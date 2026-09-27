@@ -29,6 +29,36 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  function padCanvas(canvas: HTMLCanvasElement, padding = 24): HTMLCanvasElement {
+    const padded = document.createElement("canvas");
+    padded.width = canvas.width + padding * 2;
+    padded.height = canvas.height + padding * 2;
+    const ctx = padded.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return canvas;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, padded.width, padded.height);
+    ctx.drawImage(canvas, padding, padding);
+    return padded;
+  }
+
+  function rotateCanvas(canvas: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
+    if (degrees % 360 === 0) return canvas;
+    const rotated = document.createElement("canvas");
+    const ctx = rotated.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return canvas;
+    if (degrees === 90 || degrees === 270) {
+      rotated.width = canvas.height;
+      rotated.height = canvas.width;
+    } else {
+      rotated.width = canvas.width;
+      rotated.height = canvas.height;
+    }
+    ctx.translate(rotated.width / 2, rotated.height / 2);
+    ctx.rotate((degrees * Math.PI) / 180);
+    ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+    return rotated;
+  }
+
   async function decodeCrop(cropCanvas: HTMLCanvasElement, originalFile: File) {
     lastCanvasRef.current = cropCanvas;
     setPendingFile(null);
@@ -36,29 +66,41 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
     setError(null);
     try {
       const { BrowserMultiFormatReader } = await import("@zxing/browser");
-      const { BarcodeFormat, DecodeHintType, NotFoundException } = await import("@zxing/library");
+      const { BarcodeFormat, DecodeHintType } = await import("@zxing/library");
       const SUPPORTED_FORMATS = [
-        BarcodeFormat.EAN_13, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-        BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.ITF,
       ];
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, SUPPORTED_FORMATS);
       hints.set(DecodeHintType.TRY_HARDER, true);
       const reader = new BrowserMultiFormatReader(hints);
 
-      // Attempt 1: raw crop, unscaled (natural continuous tone pixels)
-      try {
-        const result = reader.decodeFromCanvas(cropCanvas);
-        const text = result.getText()?.trim();
-        if (text) {
-          onDetected(text, String(result.getBarcodeFormat()));
-          return;
+      const padded = padCanvas(cropCanvas, 24);
+      const rotations = [0, 90, 180, 270];
+
+      // Strategy 1: ZXing on padded crop across all 4 orientations (handles rotated/vertical barcodes)
+      for (const deg of rotations) {
+        try {
+          const rotCanvas = rotateCanvas(padded, deg);
+          const result = reader.decodeFromCanvas(rotCanvas);
+          const text = result.getText()?.trim();
+          if (text) {
+            onDetected(text, String(result.getBarcodeFormat()));
+            return;
+          }
+        } catch {
+          // continue
         }
-      } catch (err) {
-        if (!(err instanceof NotFoundException)) console.warn("Raw crop decode error:", err);
       }
 
-      // Attempt 2: native BarcodeDetector if available
+      // Strategy 2: Native BarcodeDetector (Chrome/Edge/Android GPU accelerated)
       if (typeof window !== "undefined" && "BarcodeDetector" in window) {
         try {
           const supported = await window.BarcodeDetector.getSupportedFormats();
@@ -66,31 +108,37 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
           const formats = linearFormats.filter((f) => supported.includes(f));
           if (formats.length > 0) {
             const detector = new window.BarcodeDetector({ formats });
-            const results = await detector.detect(cropCanvas);
-            if (results && results.length > 0) {
-              onDetected(results[0].rawValue.trim(), results[0].format);
-              return;
+            for (const deg of [0, 90]) {
+              const rot = rotateCanvas(padded, deg);
+              const results = await detector.detect(rot).catch(() => []);
+              if (results && results.length > 0) {
+                onDetected(results[0].rawValue.trim(), results[0].format);
+                return;
+              }
             }
           }
         } catch {
-          // Non-fatal
+          // ignore
         }
       }
 
-      // Attempt 3: high-contrast scaled crop without destructive 1-bit thresholding
+      // Strategy 3: Contrast boosted + scaled (2x) crop
       try {
-        const sharpened = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: false });
-        const result = reader.decodeFromCanvas(sharpened);
-        const text = result.getText()?.trim();
-        if (text) {
-          onDetected(text, String(result.getBarcodeFormat()));
-          return;
+        const sharpened = sharpenImageToCanvas(padded, { upscale: 2, binarizeOutput: false });
+        for (const deg of [0, 90]) {
+          const rot = rotateCanvas(sharpened, deg);
+          const result = reader.decodeFromCanvas(rot);
+          const text = result.getText()?.trim();
+          if (text) {
+            onDetected(text, String(result.getBarcodeFormat()));
+            return;
+          }
         }
-      } catch (err) {
-        if (!(err instanceof NotFoundException)) console.warn("Contrast-boosted decode error:", err);
+      } catch {
+        // ignore
       }
 
-      // Attempt 4: the original full image
+      // Strategy 4: The original full uncropped image
       try {
         const img = await loadImageElement(originalFile);
         const result = await reader.decodeFromImageElement(img);
@@ -99,24 +147,43 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
           onDetected(text, String(result.getBarcodeFormat()));
           return;
         }
-      } catch (err) {
-        if (!(err instanceof NotFoundException)) console.warn("Full-image decode error:", err);
+      } catch {
+        // ignore
       }
 
-      // Attempt 5: binarized threshold as last ditch attempt
+      // Strategy 5: OCR Fallback — Read the human-readable 8-14 digit numbers printed directly under the barcode bars
       try {
-        const binarized = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: true });
-        const result = reader.decodeFromCanvas(binarized);
-        const text = result.getText()?.trim();
-        if (text) {
-          onDetected(text, String(result.getBarcodeFormat()));
-          return;
+        const { runOcr } = await import("./ocr-extract");
+        const ocrCrop = await runOcr(padded).catch(() => null);
+        let digits = ocrCrop?.rawText.match(/\b(?:\d[\s-]?){8,14}\b/);
+
+        if (!digits) {
+          const img = await loadImageElement(originalFile);
+          const fullCanvas = document.createElement("canvas");
+          fullCanvas.width = img.naturalWidth;
+          fullCanvas.height = img.naturalHeight;
+          const ctx = fullCanvas.getContext("2d", { willReadFrequently: true });
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            const ocrFull = await runOcr(fullCanvas).catch(() => null);
+            digits = ocrFull?.rawText.match(/\b(?:\d[\s-]?){8,14}\b/);
+          }
+        }
+
+        if (digits) {
+          const barcodeClean = digits[0].replace(/[\s-]/g, "");
+          if (barcodeClean.length >= 8 && barcodeClean.length <= 14) {
+            onDetected(barcodeClean, "OCR_BARCODE_NUMBERS");
+            return;
+          }
         }
       } catch {
-        // Expected if no bars
+        // ignore
       }
 
-      setError("No standard barcode bars detected in this crop. If this is a product expiry/batch label, use OCR below.");
+      setError(
+        "Could not detect barcode bars or printed numbers in this photo. Please crop tightly to the barcode (including the numbers underneath), or type the code in the 'Manual Entry' tab."
+      );
     } catch (err: any) {
       setError(err?.message || "Couldn't read that image.");
     } finally {
@@ -130,6 +197,8 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
         file={pendingFile}
         onCancel={() => setPendingFile(null)}
         onConfirm={(canvas) => decodeCrop(canvas, pendingFile)}
+        confirmLabel="Decode Barcode"
+        hintText="Drag a box around the barcode bars and the numbers printed below them."
       />
     );
   }

@@ -8,6 +8,8 @@ interface Props {
   file: File;
   onCancel: () => void;
   onConfirm: (canvas: HTMLCanvasElement) => void;
+  confirmLabel?: string;
+  hintText?: string;
 }
 
 interface Rect {
@@ -18,14 +20,9 @@ interface Rect {
 }
 
 /**
- * Lets the person drag a box around just the batch/expiry code before OCR
- * runs. This matters far more than any pixel-filter: running OCR on an
- * entire product label pulls in barcode bars, price text, and other
- * graphics as garbage characters that drown out the actual date code.
- * Cropping tightly to just that code is the single biggest accuracy lever
- * available for small dot-matrix print.
+ * Lets the person drag a box around just the batch/expiry code or barcode.
  */
-export function ImageCropSelector({ file, onCancel, onConfirm }: Props) {
+export function ImageCropSelector({ file, onCancel, onConfirm, confirmLabel, hintText }: Props) {
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef<{ startX: number; startY: number } | null>(null);
@@ -95,7 +92,7 @@ export function ImageCropSelector({ file, onCancel, onConfirm }: Props) {
   return (
     <div className="space-y-2">
       <p className="flex items-center gap-1.5 text-xs text-muted">
-        <Crop size={12} /> Drag a box around just the batch/expiry code — cropping tightly is the #1 way to improve accuracy.
+        <Crop size={12} /> {hintText || "Drag a box around the target region for highest accuracy, or proceed with full photo."}
       </p>
       <div
         ref={containerRef}
@@ -125,7 +122,7 @@ export function ImageCropSelector({ file, onCancel, onConfirm }: Props) {
           </Button>
         )}
         <Button size="sm" variant="primary" onClick={confirm}>
-          {hasSelection ? "Extract text from selection" : "Extract text from full image"}
+          {confirmLabel || (hasSelection ? "Confirm Selection" : "Process Full Image")}
         </Button>
       </div>
     </div>
