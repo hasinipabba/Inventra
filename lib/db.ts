@@ -25,7 +25,7 @@ import type {
   TaskActivityEntry,
   Warehouse,
 } from "./types";
-import { calculateProductHealth, applyProductHealth } from "./product-health";
+import { calculateProductHealth, applyProductHealth, getDaysUntilExpiry } from "./product-health";
 
 export interface NotificationPrefs {
   lowStock: boolean;
@@ -1108,34 +1108,30 @@ export interface ExpiryAlertItem {
 export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
   await ready();
   await syncInventoryHealthDb().catch(() => {});
-  const today = new Date().toISOString().slice(0, 10);
-  const rows = await sql`
-    SELECT
-      id,
-      name AS product,
-      category,
-      batch,
-      "expiryDate",
-      CASE
-        WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-        THEN ("expiryDate"::date - ${today}::date)::int
-        ELSE 0
-      END AS "daysRemaining",
-      CASE
-        WHEN status = 'expired' THEN 'critical'
-        WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-          AND ("expiryDate"::date - ${today}::date) <= 3 THEN 'critical'
-        ELSE 'warning'
-      END AS severity
-    FROM products
-    WHERE status IN ('expiring', 'expired')
-       OR ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < ${today}::date)
-    ORDER BY
-      CASE WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-        THEN "expiryDate"::date END ASC NULLS LAST
-    LIMIT ${limit}
-  `;
-  return rows as ExpiryAlertItem[];
+  const products = await listProducts();
+  const alerts: ExpiryAlertItem[] = [];
+
+  for (const p of products) {
+    if (!p.expiryDate) continue;
+    const days = getDaysUntilExpiry(p.expiryDate);
+    if (days === null) continue;
+
+    if (days <= 30 || p.status === "expired" || p.status === "expiring") {
+      alerts.push({
+        id: p.id,
+        product: p.name,
+        category: p.category,
+        batch: p.batch || "",
+        expiryDate: p.expiryDate,
+        daysRemaining: days,
+        severity: days < 0 || days <= 3 || p.status === "expired" ? "critical" : "warning",
+      });
+    }
+  }
+
+  // Sort ascending: most severely expired first (e.g. -930 before -50 before 0 before 10)
+  alerts.sort((a, b) => a.daysRemaining - b.daysRemaining);
+  return alerts.slice(0, limit);
 }
 
 export async function getWarehouses(): Promise<Warehouse[]> {
