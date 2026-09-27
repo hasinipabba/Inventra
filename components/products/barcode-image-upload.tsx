@@ -46,33 +46,74 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
       hints.set(DecodeHintType.TRY_HARDER, true);
       const reader = new BrowserMultiFormatReader(hints);
 
-      // Attempt 1: sharpened + binarized crop
-      try {
-        const sharpened = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: true });
-        const result = reader.decodeFromCanvas(sharpened);
-        onDetected(result.getText(), String(result.getBarcodeFormat()));
-        return;
-      } catch (err) {
-        if (!(err instanceof NotFoundException)) console.warn("Sharpened crop decode error:", err);
-      }
-
-      // Attempt 2: raw crop, unscaled
+      // Attempt 1: raw crop, unscaled (natural continuous tone pixels)
       try {
         const result = reader.decodeFromCanvas(cropCanvas);
-        onDetected(result.getText(), String(result.getBarcodeFormat()));
-        return;
+        const text = result.getText()?.trim();
+        if (text) {
+          onDetected(text, String(result.getBarcodeFormat()));
+          return;
+        }
       } catch (err) {
         if (!(err instanceof NotFoundException)) console.warn("Raw crop decode error:", err);
       }
 
-      // Attempt 3: the original full image
+      // Attempt 2: native BarcodeDetector if available
+      if (typeof window !== "undefined" && "BarcodeDetector" in window) {
+        try {
+          const supported = await window.BarcodeDetector.getSupportedFormats();
+          const linearFormats = ["ean_13", "upc_a", "code_128", "code_39", "qr_code"];
+          const formats = linearFormats.filter((f) => supported.includes(f));
+          if (formats.length > 0) {
+            const detector = new window.BarcodeDetector({ formats });
+            const results = await detector.detect(cropCanvas);
+            if (results && results.length > 0) {
+              onDetected(results[0].rawValue.trim(), results[0].format);
+              return;
+            }
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Attempt 3: high-contrast scaled crop without destructive 1-bit thresholding
+      try {
+        const sharpened = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: false });
+        const result = reader.decodeFromCanvas(sharpened);
+        const text = result.getText()?.trim();
+        if (text) {
+          onDetected(text, String(result.getBarcodeFormat()));
+          return;
+        }
+      } catch (err) {
+        if (!(err instanceof NotFoundException)) console.warn("Contrast-boosted decode error:", err);
+      }
+
+      // Attempt 4: the original full image
       try {
         const img = await loadImageElement(originalFile);
         const result = await reader.decodeFromImageElement(img);
-        onDetected(result.getText(), String(result.getBarcodeFormat()));
-        return;
+        const text = result.getText()?.trim();
+        if (text) {
+          onDetected(text, String(result.getBarcodeFormat()));
+          return;
+        }
       } catch (err) {
         if (!(err instanceof NotFoundException)) console.warn("Full-image decode error:", err);
+      }
+
+      // Attempt 5: binarized threshold as last ditch attempt
+      try {
+        const binarized = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: true });
+        const result = reader.decodeFromCanvas(binarized);
+        const text = result.getText()?.trim();
+        if (text) {
+          onDetected(text, String(result.getBarcodeFormat()));
+          return;
+        }
+      } catch {
+        // Expected if no bars
       }
 
       setError("No standard barcode bars detected in this crop. If this is a product expiry/batch label, use OCR below.");

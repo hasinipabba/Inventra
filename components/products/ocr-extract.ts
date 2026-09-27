@@ -7,6 +7,8 @@ export interface OcrExtraction {
   rawText: string;
   overallConfidence: number;
   fields: {
+    productName?: OcrFieldResult;
+    brand?: OcrFieldResult;
     expiryDate?: OcrFieldResult;
     mfgDate?: OcrFieldResult;
     batchNumber?: OcrFieldResult;
@@ -189,22 +191,81 @@ function resolveDates(rawText: string, foundConf: number, fallbackConf: number) 
   return { mfg, mfgConf, exp, expConf };
 }
 
+const COMMON_NON_BATCH_WORDS = new Set([
+  "BISCUIT", "BISCUITS", "COOKIE", "COOKIES", "CHOCOLATE", "SNACK", "SNACKS",
+  "PRODUCT", "PRODUCTS", "BRAND", "BRITANNIA", "PARLE", "GOODDAY", "CADBURY", "NESTLE",
+  "AMUL", "HALDIRAM", "MAGGI", "INGREDIENTS", "PACKAGE", "PACKAGED", "CONTAIN", "CONTAINS",
+  "BEST", "BEFORE", "MONTHS", "DATE", "DATES", "MFG", "EXP", "EXPIRY", "USE", "CONSUME",
+  "STORE", "COOL", "DRY", "PLACE", "AWAY", "SUNLIGHT", "VEG", "NUTRITION", "ENERGY",
+  "PROTEIN", "CARBOHYDRATE", "SUGAR", "FAT", "SODIUM", "FSSAI", "CUSTOMER", "CARE",
+  "FEEDBACK", "EMAIL", "ADDRESS", "MARKETED", "MANUFACTURED", "LTD", "LIMITED", "PVT",
+  "PRIVATE", "WEIGHT", "QUANTITY", "PRICE", "MAXIMUM", "RETAIL", "INCLUSIVE", "TAXES",
+  "BATCH", "NUMBER", "CONTROL", "ORDER"
+]);
+
+function isValidBatchCode(code: string | null | undefined): boolean {
+  if (!code) return false;
+  const upper = code.trim().toUpperCase();
+  if (upper.length < 2 || upper.length > 25) return false;
+  if (COMMON_NON_BATCH_WORDS.has(upper)) return false;
+
+  // Real manufacturing batch/lot codes almost invariably contain numeric digits (e.g. 2310A, B102, LOT-492)
+  // Pure alphabetic English words are product names or instructions, never batch codes.
+  if (!/\d/.test(upper)) return false;
+
+  // Ignore 4-digit years like 2023 or 2024
+  if (/^\d{4}$/.test(upper)) return false;
+
+  // Ignore full date strings like 12-10-2023
+  if (/^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/.test(upper)) return false;
+
+  return true;
+}
+
 function parseBatch(text: string): string | null {
-  const m = text.match(/(?:BATCH|B\.?NO|B\.?N|LOT)(?:\s*(?:&|\/|AND)?\s*(?:CONTROL)?\s*(?:NO\.?|NUMBER)?)?[\s#:.-]+([A-Z0-9-]{3,20})/i);
-  return m ? m[1].toUpperCase() : null;
+  const m = text.match(/(?:BATCH|B\.?NO|B\.?N|LOT)(?:\s*(?:&|\/|AND)?\s*(?:CONTROL)?\s*(?:NO\.?|NUMBER)?)?[\s#:.-]+([A-Z0-9-]{2,20})/i);
+  if (m && isValidBatchCode(m[1])) return m[1].toUpperCase();
+  return null;
 }
 
 function parseLot(text: string): string | null {
-  const m = text.match(/(?:LOT)(?:\s*(?:&|\/|AND)?\s*(?:CONTROL)?\s*(?:NO\.?|NUMBER)?)?[\s#:.-]+([A-Z0-9-]{3,20})/i);
-  return m ? m[1].toUpperCase() : null;
+  const m = text.match(/(?:LOT)(?:\s*(?:&|\/|AND)?\s*(?:CONTROL)?\s*(?:NO\.?|NUMBER)?)?[\s#:.-]+([A-Z0-9-]{2,20})/i);
+  if (m && isValidBatchCode(m[1])) return m[1].toUpperCase();
+  return null;
 }
 
 function parseBatchFallback(text: string, exclude: string[]): string | null {
-  const matches = text.match(/\b[A-Z0-9-]{4,13}\b/g) || [];
+  // Only look for alphanumeric tokens containing at least one digit
+  const matches = text.match(/\b(?=[A-Z0-9-]*\d)[A-Z0-9-]{3,16}\b/gi) || [];
+  const upperExclude = new Set(exclude.map((e) => e.toUpperCase()));
   for (const n of matches) {
-    if (!exclude.includes(n) && !/^\d{4}$/.test(n)) return n;
+    const upper = n.toUpperCase();
+    if (!upperExclude.has(upper) && isValidBatchCode(upper)) {
+      return upper;
+    }
   }
   return null;
+}
+
+function parseProductTitle(rawText: string): { brand?: string; name?: string } {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length >= 3 && l.length <= 40);
+
+  const ignoredKeywords = /(?:MFG|EXP|BATCH|LOT|B\.?NO|MRP|RS\.?|NET|WT|WEIGHT|GRAM|KG|BEST\s*BEFORE|USE\s*BY|FSSAI|NUTRITION|INGREDIENT|CONTAIN|CUSTOMER|FEEDBACK|DATE|KEEP|STORE|COOL|DRY)/i;
+
+  const titleLines: string[] = [];
+  for (const line of lines) {
+    if (!ignoredKeywords.test(line) && /[a-z]{3,}/i.test(line)) {
+      titleLines.push(line);
+      if (titleLines.length >= 2) break;
+    }
+  }
+
+  if (titleLines.length === 0) return {};
+  if (titleLines.length === 1) return { name: titleLines[0] };
+  return { brand: titleLines[0], name: titleLines[1] };
 }
 
 function parseWeight(text: string): { amount: string; unit: string } | null {
@@ -340,6 +401,7 @@ export async function runOcr(
     const mrp = parseMrp(rawText);
     const qty = parseQuantity(rawText);
     const lot = parseLot(rawText);
+    const title = parseProductTitle(rawText);
 
     function field(value: string | null, confidence: number): OcrFieldResult | undefined {
       return value ? { value, confidence } : undefined;
@@ -349,6 +411,8 @@ export async function runOcr(
       rawText,
       overallConfidence: overall,
       fields: {
+        productName: field(title.name || null, fallbackConf),
+        brand: field(title.brand || null, fallbackConf),
         mfgDate: field(mfg, mfgConf),
         expiryDate: field(exp, expConf),
         batchNumber: field(batch, batchConf),

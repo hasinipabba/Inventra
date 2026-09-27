@@ -17,7 +17,7 @@ type Stage =
   | { kind: "looking_up"; barcode: string }
   | { kind: "existing_product"; product: Product; barcode: string }
   | { kind: "new_product"; barcode: string; draft: Partial<Product>; sourceLabel: string }
-  | { kind: "manual_entry"; barcode: string; reason: string }
+  | { kind: "manual_entry"; barcode: string; reason: string; draft?: Partial<Product> }
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string; canRetry: boolean };
 
@@ -99,7 +99,7 @@ export function ScanWorkflow() {
     setSaving(true);
     try {
       const sku = `SKU-${barcode.slice(-6)}-${Date.now().toString().slice(-4)}`;
-      const name = draft.name?.trim() || `Product ${batchForm.batchNumber || barcode}`;
+      const name = draft.name?.trim() || `Product ${barcode}`;
       const initialHealth = calculateProductHealth({
         stock: 0,
         minStock: 10,
@@ -304,10 +304,16 @@ export function ScanWorkflow() {
         });
         return;
       }
+      const ocrDraft = {
+        name: extraction.fields.productName?.value || "",
+        brand: extraction.fields.brand?.value || "",
+        weight: extraction.fields.netWeight?.value || "",
+      };
       setStage({
         kind: "manual_entry",
         barcode,
         reason: "Packaging label scanned via OCR. Review details and enter product name.",
+        draft: ocrDraft,
       });
     } catch {
       setStage({
@@ -485,7 +491,13 @@ function BatchAndProductForm({
   onSaveNewProduct: (draft: Partial<Product>) => void;
   onSaveBatch: (product: Product) => void;
 }) {
-  const [draft, setDraft] = useState<Partial<Product>>(stage.kind === "new_product" ? stage.draft : emptyDraft);
+  const [draft, setDraft] = useState<Partial<Product>>(
+    stage.kind === "new_product"
+      ? stage.draft
+      : stage.kind === "manual_entry" && stage.draft
+      ? stage.draft
+      : emptyDraft
+  );
   const isNewOrManual = stage.kind === "new_product" || stage.kind === "manual_entry";
 
   const inputClass = (field: string) =>
@@ -495,8 +507,13 @@ function BatchAndProductForm({
 
   const handleOcrExtracted = (extraction: OcrExtraction) => {
     applyOcr(extraction);
-    if (isNewOrManual && extraction.fields.netWeight?.value && !draft.weight) {
-      setDraft((d) => ({ ...d, weight: extraction.fields.netWeight?.value }));
+    if (isNewOrManual) {
+      setDraft((d) => ({
+        ...d,
+        name: d.name || extraction.fields.productName?.value || d.name,
+        brand: d.brand || extraction.fields.brand?.value || d.brand,
+        weight: d.weight || extraction.fields.netWeight?.value || d.weight,
+      }));
     }
   };
 
@@ -531,7 +548,7 @@ function BatchAndProductForm({
             className="font-semibold shadow-sm"
             disabled={saving}
             onClick={() => {
-              const nameToSave = draft.name?.trim() || `Product ${batchForm.batchNumber || stage.barcode}`;
+              const nameToSave = draft.name?.trim() || `Product ${stage.barcode}`;
               onSaveNewProduct({ ...draft, name: nameToSave });
             }}
           >
@@ -711,7 +728,7 @@ function BatchAndProductForm({
               className="min-w-56 font-semibold shadow-md"
               disabled={saving}
               onClick={() => {
-                const nameToSave = draft.name?.trim() || `Product ${batchForm.batchNumber || stage.barcode}`;
+                const nameToSave = draft.name?.trim() || `Product ${stage.barcode}`;
                 onSaveNewProduct({ ...draft, name: nameToSave });
               }}
             >

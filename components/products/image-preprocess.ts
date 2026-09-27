@@ -148,41 +148,51 @@ export interface FrameRoi {
 }
 
 /**
- * Cheaper, real-time-safe sharpen for live camera frames: crops to the
- * given region of interest (so decoding only ever looks at what's actually
- * inside the on-screen guide box — not the whole scene, which is mostly
- * hands/face/background clutter), upscales that crop for more effective
- * resolution, then grayscale + contrast + binarize. No unsharp mask here —
- * too slow to run every frame at camera resolution.
+ * Crops and prepares a video frame for barcode decoders.
+ * Retains natural continuous-tone pixel gradients rather than destructive
+ * 1-bit binarization, allowing ZXing and BarcodeDetector to locate edges
+ * with sub-pixel precision at high frame rates.
  */
-export function sharpenVideoFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement, roi?: FrameRoi): HTMLCanvasElement {
+export function cropVideoFrame(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  roi?: FrameRoi,
+  boostContrast = false
+): HTMLCanvasElement {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
+  if (!vw || !vh) return canvas;
+
   const region = roi ?? { x: 0, y: 0, w: 1, h: 1 };
   const sx = region.x * vw;
   const sy = region.y * vh;
   const sw = region.w * vw;
   const sh = region.h * vh;
 
-  // Upscale the cropped region back up so a small on-screen box still gives
-  // the decoder plenty of pixels to work with.
   const scale = roi ? Math.min(2, 1280 / Math.max(sw, 1)) : 1;
   const outW = Math.round(sw * scale);
   const outH = Math.round(sh * scale);
   if (canvas.width !== outW) canvas.width = outW;
   if (canvas.height !== outH) canvas.height = outH;
 
-  const ctx = canvas.getContext("2d")!;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return canvas;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "medium";
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH);
-  const imageData = ctx.getImageData(0, 0, outW, outH);
-  grayscaleAndContrast(imageData.data, 1.4);
-  const d = imageData.data;
-  const gray = new Uint8ClampedArray(outW * outH);
-  for (let i = 0, p = 0; i < d.length; i += 4, p++) gray[p] = d[i];
-  const mask = adaptiveThresholdMask(gray, outW, outH);
-  for (let i = 0, p = 0; i < d.length; i += 4, p++) d[i] = d[i + 1] = d[i + 2] = mask[p];
-  ctx.putImageData(imageData, 0, 0);
+
+  if (boostContrast) {
+    const imageData = ctx.getImageData(0, 0, outW, outH);
+    grayscaleAndContrast(imageData.data, 1.25);
+    ctx.putImageData(imageData, 0, 0);
+  }
+
   return canvas;
+}
+
+export function sharpenVideoFrame(video: HTMLVideoElement, canvas: HTMLCanvasElement, roi?: FrameRoi): HTMLCanvasElement {
+  return cropVideoFrame(video, canvas, roi, false);
 }
 
 export function loadImageElement(file: File | Blob): Promise<HTMLImageElement> {

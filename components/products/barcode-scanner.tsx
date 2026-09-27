@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Camera, RefreshCw, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { sharpenVideoFrame, type FrameRoi } from "./image-preprocess";
+import { cropVideoFrame, sharpenVideoFrame, type FrameRoi } from "./image-preprocess";
 
 // Matches the visible guide-box overlay below (h-1/2 w-3/4, centered) —
 // decoding is restricted to this region so what you see in the box is
@@ -147,13 +147,21 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
       }
 
       // --- Engine 1: native BarcodeDetector (Chrome/Edge/Android) ---
+      let useNative = false;
       if (typeof window !== "undefined" && "BarcodeDetector" in window) {
         try {
           const supported: string[] = await window.BarcodeDetector.getSupportedFormats();
+          // Ensure the native detector actually supports retail linear barcodes
+          // (EAN-13, UPC-A, Code-128). If it only supports QR codes (common on Windows
+          // desktop Chrome), we must fall back to ZXing so product barcodes are scanned!
+          const linearFormats = ["ean_13", "upc_a", "code_128", "code_39"];
+          const hasLinear = linearFormats.some((f) => supported.includes(f));
           const formats = NATIVE_FORMATS.filter((f) => supported.includes(f));
-          if (formats.length > 0) {
+
+          if (hasLinear && formats.length > 0) {
             const detector = new window.BarcodeDetector({ formats });
             setEngine("native");
+            useNative = true;
             let busy = false;
             let localFrames = 0;
             const loop = async () => {
@@ -161,19 +169,18 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
               if (!busy && video.readyState >= 2 && video.videoWidth > 0) {
                 busy = true;
                 try {
-                  const frame = sharpenVideoFrame(video, workCanvas, GUIDE_BOX_ROI);
-                  let results = await detector.detect(frame);
-                  if (results.length === 0) {
-                    // Fallback: the code may be sitting just outside the guide box —
-                    // try the full frame before giving up on this attempt.
-                    const fullFrame = sharpenVideoFrame(video, workCanvas);
-                    results = await detector.detect(fullFrame);
+                  // Direct video element first (GPU accelerated)
+                  let results = await detector.detect(video).catch(() => []);
+                  if (!results || results.length === 0) {
+                    const frame = cropVideoFrame(video, workCanvas, GUIDE_BOX_ROI);
+                    results = await detector.detect(frame).catch(() => []);
                   }
                   localFrames += 1;
                   setFrameCount(localFrames);
                   setLastAttemptAt(Date.now());
-                  if (results.length > 0) {
+                  if (results && results.length > 0) {
                     onDetected(results[0].rawValue, results[0].format);
+                    return;
                   }
                 } catch (err) {
                   console.warn("BarcodeDetector error:", err);
@@ -191,15 +198,19 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
         }
       }
 
-      // --- Engine 2: ZXing fallback (Firefox, Safari, older browsers) ---
-      // Loaded lazily so @zxing never enters the initial bundle and is skipped
-      // entirely when the native BarcodeDetector path succeeds above.
+      // --- Engine 2: ZXing fallback (Firefox, Safari, desktop browsers without native 1D) ---
       setEngine("zxing");
       const { BrowserMultiFormatReader } = await import("@zxing/browser");
       const { BarcodeFormat, DecodeHintType, NotFoundException } = await import("@zxing/library");
       const ZXING_FORMATS = [
-        BarcodeFormat.EAN_13, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-        BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.ITF,
       ];
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, ZXING_FORMATS);
@@ -207,28 +218,41 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
       const reader = new BrowserMultiFormatReader(hints);
       let localFrames = 0;
       let lastTick = 0;
+      let attemptCount = 0;
+
       const zxingLoop = (timestamp: number) => {
         if (cancelled) return;
-        if (timestamp - lastTick >= 150 && video.readyState >= 2 && video.videoWidth > 0) {
+        if (timestamp - lastTick >= 100 && video.readyState >= 2 && video.videoWidth > 0) {
           lastTick = timestamp;
+          attemptCount++;
           try {
-            const frame = sharpenVideoFrame(video, workCanvas, GUIDE_BOX_ROI);
+            // Alternate between guide box crop and full frame for best coverage
+            const tryCrop = attemptCount % 2 === 0;
+            const targetCanvas = cropVideoFrame(video, workCanvas, tryCrop ? GUIDE_BOX_ROI : undefined);
             let result;
             try {
-              result = reader.decodeFromCanvas(frame);
+              result = reader.decodeFromCanvas(targetCanvas);
             } catch (cropErr) {
-              if (!(cropErr instanceof NotFoundException)) throw cropErr;
-              // Fallback: the code may be sitting just outside the guide box —
-              // try the full frame before giving up on this attempt.
-              const fullFrame = sharpenVideoFrame(video, workCanvas);
-              result = reader.decodeFromCanvas(fullFrame);
+              if (tryCrop && cropErr instanceof NotFoundException) {
+                // Secondary check: try full frame
+                const fullFrame = cropVideoFrame(video, workCanvas);
+                result = reader.decodeFromCanvas(fullFrame);
+              } else {
+                throw cropErr;
+              }
             }
-            localFrames += 1;
-            setFrameCount(localFrames);
-            setLastAttemptAt(Date.now());
-            onDetected(result.getText(), String(result.getBarcodeFormat()));
+            if (result) {
+              const code = result.getText()?.trim();
+              if (code) {
+                onDetected(code, String(result.getBarcodeFormat()));
+                return;
+              }
+            }
           } catch (err) {
-            if (!(err instanceof NotFoundException)) console.warn("Scanner decode warning:", err);
+            if (!(err instanceof NotFoundException)) {
+              console.warn("Scanner decode warning:", err);
+            }
+          } finally {
             localFrames += 1;
             setFrameCount(localFrames);
             setLastAttemptAt(Date.now());
@@ -236,7 +260,7 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
         }
         rafRef.current = requestAnimationFrame(zxingLoop);
       };
-      zxingControlsRef.current = { stop: () => {} }; // rAF loop is stopped via cleanup()/rafRef
+      zxingControlsRef.current = { stop: () => {} };
       rafRef.current = requestAnimationFrame(zxingLoop);
     }
 
