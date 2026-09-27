@@ -9,14 +9,16 @@ export async function GET(req: NextRequest) {
 
   try {
     if (session.role === "Admin") {
-      return NextResponse.json(await listLeaveRequests());
+      const list = await listLeaveRequests();
+      return NextResponse.json(list);
     }
     const staff = await findStaffByEmail(session.email);
     if (!staff) return NextResponse.json([]);
-    return NextResponse.json(await listLeaveRequests(staff.id));
-  } catch (err) {
+    const list = await listLeaveRequests(staff.id);
+    return NextResponse.json(list);
+  } catch (err: any) {
     console.error("GET /api/leave failed:", err);
-    return NextResponse.json({ error: "Failed to load leave requests" }, { status: 500 });
+    return NextResponse.json({ error: err?.message || "Failed to load leave requests" }, { status: 500 });
   }
 }
 

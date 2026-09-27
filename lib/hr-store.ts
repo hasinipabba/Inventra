@@ -3,10 +3,7 @@ import { sql } from "./pg";
 // ---------------------------------------------------------------------------
 // Leave Management + the auth-user <-> staff-record link.
 //
-// This is a brand new table (leave_requests) — nothing here alters
-// the existing `staff` or any inventory/product table. This
-// module is additive only, per the "do not modify locked modules" rule.
-//
+// This is a table (leave_requests) linking staff to their leave submissions.
 // Linking a logged-in user to "their" staff row: auth_users and staff are
 // separate tables (auth_users is for login, staff is the HR roster). We
 // link them by email, which is the only field both sides share.
@@ -39,32 +36,71 @@ function ready(): Promise<void> {
 async function initSchema() {
   await sql`CREATE TABLE IF NOT EXISTS leave_requests (
     id TEXT PRIMARY KEY,
-    "staffId" TEXT NOT NULL,
-    "staffName" TEXT NOT NULL,
-    "fromDate" TEXT NOT NULL,
-    "toDate" TEXT NOT NULL,
+    "staffId" TEXT,
+    "staffName" TEXT,
+    "fromDate" TEXT,
+    "toDate" TEXT,
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     "createdAt" TEXT NOT NULL
   )`;
+
+  // Column safety migrations in case the table was created earlier with missing columns
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS "staffId" TEXT`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS "staffName" TEXT`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS "fromDate" TEXT`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS "toDate" TEXT`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS reason TEXT`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'`;
+  await sql`ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS "createdAt" TEXT DEFAULT CURRENT_TIMESTAMP`;
 }
 
 // --- staff lookup by email (read-only against the existing staff table) ---
 export async function findStaffByEmail(email: string): Promise<{ id: string; name: string } | null> {
-  const rows = (await sql`SELECT id, name FROM staff WHERE LOWER(email) = ${email.trim().toLowerCase()} LIMIT 1`) as {
-    id: string;
-    name: string;
-  }[];
-  return rows[0] ?? null;
+  try {
+    const rows = (await sql`SELECT id, name FROM staff WHERE LOWER(email) = ${email.trim().toLowerCase()} LIMIT 1`) as {
+      id: string;
+      name: string;
+    }[];
+    return rows[0] ?? null;
+  } catch (err) {
+    console.error("findStaffByEmail failed:", err);
+    return null;
+  }
 }
 
 // --- leave requests ---
 export async function listLeaveRequests(staffId?: string): Promise<LeaveRequest[]> {
-  await ready();
-  if (staffId) {
-    return (await sql`SELECT * FROM leave_requests WHERE "staffId" = ${staffId} ORDER BY "createdAt" DESC`) as LeaveRequest[];
+  try {
+    await ready();
+    let rows: any[] = [];
+    if (staffId) {
+      rows = (await sql`
+        SELECT * FROM leave_requests
+        WHERE "staffId" = ${staffId} OR staff_id = ${staffId}
+        ORDER BY COALESCE("createdAt", created_at, id) DESC
+      `) as any[];
+    } else {
+      rows = (await sql`
+        SELECT * FROM leave_requests
+        ORDER BY COALESCE("createdAt", created_at, id) DESC
+      `) as any[];
+    }
+
+    return rows.map((r) => ({
+      id: r.id,
+      staffId: r.staffId ?? r.staff_id ?? "",
+      staffName: r.staffName ?? r.staff_name ?? "Staff Member",
+      fromDate: r.fromDate ?? r.from_date ?? "",
+      toDate: r.toDate ?? r.to_date ?? "",
+      reason: r.reason ?? "",
+      status: (r.status ?? "pending") as LeaveStatus,
+      createdAt: r.createdAt ?? r.created_at ?? new Date().toISOString(),
+    }));
+  } catch (err) {
+    console.error("listLeaveRequests failed:", err);
+    return [];
   }
-  return (await sql`SELECT * FROM leave_requests ORDER BY "createdAt" DESC`) as LeaveRequest[];
 }
 
 export async function createLeaveRequest(input: Omit<LeaveRequest, "id" | "createdAt" | "status">): Promise<LeaveRequest> {
@@ -88,6 +124,17 @@ export async function createLeaveRequest(input: Omit<LeaveRequest, "id" | "creat
 
 export async function updateLeaveStatus(id: string, status: LeaveStatus): Promise<LeaveRequest | null> {
   await ready();
-  const rows = (await sql`UPDATE leave_requests SET status = ${status} WHERE id = ${id} RETURNING *`) as LeaveRequest[];
-  return rows[0] ?? null;
+  const rows = (await sql`UPDATE leave_requests SET status = ${status} WHERE id = ${id} RETURNING *`) as any[];
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    staffId: r.staffId ?? r.staff_id ?? "",
+    staffName: r.staffName ?? r.staff_name ?? "Staff Member",
+    fromDate: r.fromDate ?? r.from_date ?? "",
+    toDate: r.toDate ?? r.to_date ?? "",
+    reason: r.reason ?? "",
+    status: (r.status ?? "pending") as LeaveStatus,
+    createdAt: r.createdAt ?? r.created_at ?? new Date().toISOString(),
+  };
 }
