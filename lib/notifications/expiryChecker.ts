@@ -29,7 +29,9 @@
  *   route hit by a "Run Inventory Check" button.
  */
 
-import { listBatches, listProducts, listNotifications, pushNotification } from "@/lib/db";
+import { listBatches, listProducts, listNotifications, pushNotification, syncInventoryHealthDb } from "@/lib/db";
+import { sql } from "@/lib/pg";
+import { parseDateParts } from "@/lib/product-health";
 import type { ProductBatch, Product, NotificationItem } from "@/lib/types";
 import {sendExpiredEmail, sendExpiringSoonEmail}  from "@/lib/email/notificationEmails";
 import { sendExpiredPush, sendExpiringSoonPush } from "@/lib/push/pushNotifications";
@@ -80,9 +82,9 @@ export interface ExpiryCheckSummary {
  */
 export function parseExpiryDate(expiryDate: string | undefined | null): Date | null {
   if (!expiryDate || typeof expiryDate !== "string" || !expiryDate.trim()) return null;
-  const parsed = new Date(expiryDate.trim());
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
+  const parts = parseDateParts(expiryDate);
+  if (!parts) return null;
+  return new Date(parts.year, parts.month, parts.day);
 }
 
 /**
@@ -228,6 +230,9 @@ export async function runExpiryChecker(): Promise<ExpiryCheckSummary> {
     errors: [],
   };
 
+  // Sync health in database first
+  await syncInventoryHealthDb().catch(() => {});
+
   let batches: ProductBatch[];
   let products: Product[];
   let existingNotifications: NotificationItem[];
@@ -243,9 +248,31 @@ export async function runExpiryChecker(): Promise<ExpiryCheckSummary> {
   }
 
   const productNameById = new Map(products.map((p) => [p.id, p.name]));
-  summary.totalBatchesChecked = batches.length;
 
-  for (const batch of batches) {
+  // Combine batches and products that have an expiryDate but no batches
+  const batchProductIds = new Set(batches.map((b) => b.productId));
+  const syntheticBatches: ProductBatch[] = products
+    .filter((p) => p.expiryDate && !batchProductIds.has(p.id))
+    .map((p) => ({
+      id: `pbatch-${p.id}`,
+      productId: p.id,
+      barcode: p.barcode,
+      batchNumber: p.batch || "Primary",
+      lotNumber: "",
+      quantity: p.stock,
+      mfgDate: p.mfgDate,
+      expiryDate: p.expiryDate,
+      mrp: "",
+      netWeight: p.weight || "",
+      warehouse: p.warehouse,
+      scannedBy: "System",
+      scannedAt: p.lastUpdated,
+    }));
+
+  const allItemsToCheck = [...batches, ...syntheticBatches];
+  summary.totalBatchesChecked = allItemsToCheck.length;
+
+  for (const batch of allItemsToCheck) {
     try {
       const result = checkBatch(batch, productNameById, existingNotifications);
 
@@ -258,18 +285,18 @@ export async function runExpiryChecker(): Promise<ExpiryCheckSummary> {
         continue;
       }
 
-      if (result.status === "expired") summary.expiredCount += 1;
-      else summary.expiringSoonCount += 1;
+      if (result.status === "expired") {
+        summary.expiredCount += 1;
+        await sql`UPDATE products SET status = 'expired', "healthScore" = 0, "lastUpdated" = CURRENT_DATE::text WHERE id = ${result.productId}`;
+      } else {
+        summary.expiringSoonCount += 1;
+        await sql`UPDATE products SET status = 'expiring', "lastUpdated" = CURRENT_DATE::text WHERE id = ${result.productId} AND status != 'expired'`;
+      }
 
       const created = await pushNotification({ category: result.category, message: result.message });
-      // Keep the in-memory list updated so later batches in this same run
-      // (e.g. a second batch of the same product) see it and don't duplicate.
       existingNotifications.push(created);
       summary.notificationsCreated += 1;
 
-      // Email is best-effort: sendExpiredEmail/sendExpiringSoonEmail never
-      // throw (see lib/email/mailer.ts), so a failed send can't interrupt
-      // this run — it only logs internally.
       if (result.status === "expired") {
         await sendExpiredEmail({
           productName: result.productName,
@@ -277,8 +304,6 @@ export async function runExpiryChecker(): Promise<ExpiryCheckSummary> {
           expiryDate: batch.expiryDate,
           daysExpired: Math.abs(result.daysUntilExpiry),
         });
-        // Push is likewise best-effort and synchronous/never-throwing (see
-        // lib/push/pushService.ts) — safe to call unconditionally.
         sendExpiredPush({
           productName: result.productName,
           batchId: result.batchId,

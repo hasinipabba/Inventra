@@ -10,6 +10,7 @@ import { BarcodeImageUpload } from "./barcode-image-upload";
 import { ManualBarcodeEntry } from "./manual-barcode-entry";
 import { OcrCapture } from "./ocr-capture";
 import { runOcr, LOW_CONFIDENCE_THRESHOLD, type OcrExtraction } from "./ocr-extract";
+import { calculateProductHealth } from "@/lib/product-health";
 
 type Stage =
   | { kind: "scanning" }
@@ -99,6 +100,11 @@ export function ScanWorkflow() {
     try {
       const sku = `SKU-${barcode.slice(-6)}-${Date.now().toString().slice(-4)}`;
       const name = draft.name?.trim() || `Product ${batchForm.batchNumber || barcode}`;
+      const initialHealth = calculateProductHealth({
+        stock: 0,
+        minStock: 10,
+        expiryDate: batchForm.expiryDate,
+      });
       const payload: Product = {
         id: `prod-${Date.now()}`,
         name,
@@ -118,8 +124,8 @@ export function ScanWorkflow() {
         expiryDate: batchForm.expiryDate,
         lastRestocked: new Date().toISOString().slice(0, 10),
         lastUpdated: new Date().toISOString().slice(0, 10),
-        healthScore: 100,
-        status: "healthy",
+        healthScore: initialHealth.healthScore,
+        status: initialHealth.status,
         image: draft.image || "",
         description: draft.description || "",
         packageSize: draft.packageSize || "",
@@ -156,10 +162,22 @@ export function ScanWorkflow() {
         const err = await batchRes.json();
         throw new Error(err.error || "Product saved, but the batch couldn't be recorded.");
       }
+      const updatedHealth = calculateProductHealth({
+        stock: quantity,
+        minStock: created.minStock || 10,
+        expiryDate: batchForm.expiryDate || created.expiryDate,
+      });
       await fetch(`/api/products/${created.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...created, stock: quantity }),
+        body: JSON.stringify({
+          ...created,
+          stock: quantity,
+          status: updatedHealth.status,
+          healthScore: updatedHealth.healthScore,
+          expiryDate: batchForm.expiryDate || created.expiryDate,
+          batch: batchForm.batchNumber || created.batch,
+        }),
       });
 
       setStage({ kind: "saved", message: `Added ${created.name} to the database — ${quantity} units logged to inventory.` });
@@ -197,17 +215,26 @@ export function ScanWorkflow() {
         const err = await res.json();
         throw new Error(err.error || "Failed to save batch");
       }
-      // Reflect the new stock on the product record itself.
+      const updatedStock = (product.stock || 0) + quantity;
+      const updatedExpiry = batchForm.expiryDate || product.expiryDate;
+      const updatedHealth = calculateProductHealth({
+        stock: updatedStock,
+        minStock: product.minStock || 10,
+        expiryDate: updatedExpiry,
+      });
+      // Reflect the new stock and calculated health on the product record itself.
       await fetch(`/api/products/${product.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...product,
-          stock: (product.stock || 0) + quantity,
+          stock: updatedStock,
           batch: batchForm.batchNumber || product.batch,
           mfgDate: batchForm.mfgDate || product.mfgDate,
-          expiryDate: batchForm.expiryDate || product.expiryDate,
+          expiryDate: updatedExpiry,
           warehouse,
+          status: updatedHealth.status,
+          healthScore: updatedHealth.healthScore,
           lastRestocked: new Date().toISOString().slice(0, 10),
           lastUpdated: new Date().toISOString().slice(0, 10),
         }),
@@ -628,6 +655,33 @@ function BatchAndProductForm({
             />
           </label>
         </div>
+
+        {(() => {
+          if (!batchForm.expiryDate) return null;
+          const health = calculateProductHealth({
+            stock: Number(batchForm.quantity) || 1,
+            minStock: 10,
+            expiryDate: batchForm.expiryDate,
+          });
+          if (health.isExpired) {
+            return (
+              <div className="flex items-center gap-2 rounded-lg border border-out/40 bg-out/10 p-2.5 text-xs text-out font-medium">
+                <AlertCircle size={15} className="shrink-0" />
+                <span>CRITICAL: {health.reason}. This product will be flagged as Expired (0% health).</span>
+              </div>
+            );
+          }
+          if (health.isExpiringSoon) {
+            return (
+              <div className="flex items-center gap-2 rounded-lg border border-expiring/40 bg-expiring/10 p-2.5 text-xs text-expiring font-medium">
+                <AlertCircle size={15} className="shrink-0" />
+                <span>WARNING: {health.reason}. This product will be flagged as Expiring Soon ({health.healthScore}% health).</span>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         {ocrLowConfidence.size > 0 && (
           <p className="flex items-center gap-1 text-xs text-low">
             <AlertCircle size={12} /> Highlighted fields had low OCR confidence — please verify.

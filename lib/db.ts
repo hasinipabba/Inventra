@@ -25,6 +25,7 @@ import type {
   TaskActivityEntry,
   Warehouse,
 } from "./types";
+import { calculateProductHealth, applyProductHealth } from "./product-health";
 
 export interface NotificationPrefs {
   lowStock: boolean;
@@ -212,6 +213,7 @@ async function initSchema() {
   )`;
 
   await seedIfEmpty();
+  await syncInventoryHealthDb();
 }
 
 async function seedIfEmpty() {
@@ -370,21 +372,137 @@ async function recalcCategoryCounts() {
   );
 }
 
+// ---------- Inventory Health & Expiry Synchronization ----------
+export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }> {
+  try {
+    // 1. Sync earliest batch expiryDate to product if batches exist
+    await sql`
+      UPDATE products p
+      SET "expiryDate" = b."expiryDate",
+          batch = COALESCE(NULLIF(p.batch, ''), b."batchNumber"),
+          "mfgDate" = COALESCE(NULLIF(p."mfgDate", ''), b."mfgDate")
+      FROM (
+        SELECT DISTINCT ON ("productId") "productId", "expiryDate", "batchNumber", "mfgDate"
+        FROM product_batches
+        WHERE "expiryDate" IS NOT NULL AND "expiryDate" != ''
+        ORDER BY "productId", "expiryDate" ASC
+      ) b
+      WHERE p.id = b."productId"
+        AND (p."expiryDate" IS NULL OR p."expiryDate" = '' OR p."expiryDate" != b."expiryDate");
+    `;
+
+    // 2. Mark expired products (expiry date has passed)
+    const expiredRes = await sql`
+      UPDATE products
+      SET status = 'expired',
+          "healthScore" = 0,
+          "lastUpdated" = CURRENT_DATE::text
+      WHERE "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+        AND "expiryDate"::date < CURRENT_DATE
+        AND (status != 'expired' OR "healthScore" != 0);
+    `;
+
+    // 3. Mark expiring products (0 <= days <= 30)
+    const expiringRes = await sql`
+      UPDATE products
+      SET status = 'expiring',
+          "healthScore" = GREATEST(15, LEAST(55, ROUND(15 + (("expiryDate"::date - CURRENT_DATE)::float / 30.0) * 40))),
+          "lastUpdated" = CURRENT_DATE::text
+      WHERE "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+        AND "expiryDate"::date >= CURRENT_DATE
+        AND ("expiryDate"::date - CURRENT_DATE) <= 30
+        AND status NOT IN ('expired', 'expiring');
+    `;
+
+    // 4. Mark out of stock (when not expired)
+    await sql`
+      UPDATE products
+      SET status = 'out',
+          "healthScore" = 0
+      WHERE (stock IS NULL OR stock <= 0)
+        AND (status != 'out' OR "healthScore" != 0)
+        AND (
+          "expiryDate" IS NULL
+          OR "expiryDate" = ''
+          OR NOT ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < CURRENT_DATE)
+        );
+    `;
+
+    // 5. Mark low stock (0 < stock <= minStock, when not expired or expiring)
+    await sql`
+      UPDATE products
+      SET status = 'low',
+          "healthScore" = GREATEST(30, LEAST(65, ROUND(30 + (stock::float / GREATEST(1, "minStock")::float) * 35)))
+      WHERE stock > 0
+        AND stock <= "minStock"
+        AND status != 'low'
+        AND (
+          "expiryDate" IS NULL
+          OR "expiryDate" = ''
+          OR (
+            "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+            AND "expiryDate"::date >= CURRENT_DATE
+            AND ("expiryDate"::date - CURRENT_DATE) > 30
+          )
+        );
+    `;
+
+    // 6. Mark healthy (stock > minStock, when not expired or expiring)
+    await sql`
+      UPDATE products
+      SET status = 'healthy',
+          "healthScore" = LEAST(100, GREATEST(80, ROUND(80 + LEAST(20.0, ((stock - "minStock")::float / GREATEST(1, "minStock")::float) * 20.0))))
+      WHERE stock > "minStock"
+        AND status != 'healthy'
+        AND (
+          "expiryDate" IS NULL
+          OR "expiryDate" = ''
+          OR (
+            "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
+            AND "expiryDate"::date >= CURRENT_DATE
+            AND ("expiryDate"::date - CURRENT_DATE) > 30
+          )
+        );
+    `;
+
+    const totalUpdated = (expiredRes?.length || 0) + (expiringRes?.length || 0);
+    return { updatedCount: totalUpdated };
+  } catch (err) {
+    console.error("syncInventoryHealthDb warning:", err);
+    return { updatedCount: 0 };
+  }
+}
+
 // ---------- Products ----------
 export async function listProducts(): Promise<Product[]> {
   await ready();
-  return (await sql`SELECT * FROM products ORDER BY "lastUpdated" DESC NULLS LAST`) as Product[];
+  const rows = (await sql`SELECT * FROM products ORDER BY "lastUpdated" DESC NULLS LAST`) as Product[];
+  return rows.map((p) => applyProductHealth(p));
 }
+
 export async function createProduct(p: Product): Promise<Product> {
   await ready();
+  const health = calculateProductHealth(p);
+  const item: Product = {
+    ...p,
+    status: health.status,
+    healthScore: health.healthScore,
+  };
   await sql`INSERT INTO products (id, name, sku, barcode, category, brand, batch, supplier, warehouse, shelf, stock, "minStock", "maxStock", unit, "mfgDate", "expiryDate", "lastRestocked", "lastUpdated", "healthScore", status, image, description, "packageSize", weight, manufacturer, "modelNumber", "qrCode", source)
-             VALUES (${p.id}, ${p.name}, ${p.sku}, ${p.barcode}, ${p.category}, ${p.brand}, ${p.batch}, ${p.supplier}, ${p.warehouse}, ${p.shelf}, ${p.stock}, ${p.minStock}, ${p.maxStock}, ${p.unit}, ${p.mfgDate}, ${p.expiryDate}, ${p.lastRestocked}, ${p.lastUpdated}, ${p.healthScore}, ${p.status}, ${p.image || ""}, ${p.description || null}, ${p.packageSize || null}, ${p.weight || null}, ${p.manufacturer || null}, ${p.modelNumber || null}, ${p.qrCode || null}, ${p.source || null})`;
+             VALUES (${item.id}, ${item.name}, ${item.sku}, ${item.barcode}, ${item.category}, ${item.brand}, ${item.batch}, ${item.supplier}, ${item.warehouse}, ${item.shelf}, ${item.stock}, ${item.minStock}, ${item.maxStock}, ${item.unit}, ${item.mfgDate}, ${item.expiryDate}, ${item.lastRestocked}, ${item.lastUpdated}, ${item.healthScore}, ${item.status}, ${item.image || ""}, ${item.description || null}, ${item.packageSize || null}, ${item.weight || null}, ${item.manufacturer || null}, ${item.modelNumber || null}, ${item.qrCode || null}, ${item.source || null})`;
   await recalcCategoryCounts();
-  return p;
+  return item;
 }
+
 export async function updateProduct(id: string, p: Product): Promise<Product> {
   await ready();
-  const updated = { ...p, id };
+  const health = calculateProductHealth(p);
+  const updated: Product = {
+    ...p,
+    id,
+    status: health.status,
+    healthScore: health.healthScore,
+  };
   await sql`INSERT INTO products (id, name, sku, barcode, category, brand, batch, supplier, warehouse, shelf, stock, "minStock", "maxStock", unit, "mfgDate", "expiryDate", "lastRestocked", "lastUpdated", "healthScore", status, image, description, "packageSize", weight, manufacturer, "modelNumber", "qrCode", source)
              VALUES (${updated.id}, ${updated.name}, ${updated.sku}, ${updated.barcode}, ${updated.category}, ${updated.brand}, ${updated.batch}, ${updated.supplier}, ${updated.warehouse}, ${updated.shelf}, ${updated.stock}, ${updated.minStock}, ${updated.maxStock}, ${updated.unit}, ${updated.mfgDate}, ${updated.expiryDate}, ${updated.lastRestocked}, ${updated.lastUpdated}, ${updated.healthScore}, ${updated.status}, ${updated.image || ""}, ${updated.description || null}, ${updated.packageSize || null}, ${updated.weight || null}, ${updated.manufacturer || null}, ${updated.modelNumber || null}, ${updated.qrCode || null}, ${updated.source || null})
              ON CONFLICT (id) DO UPDATE SET
@@ -406,6 +524,7 @@ export async function updateProduct(id: string, p: Product): Promise<Product> {
   await recalcCategoryCounts();
   return updated;
 }
+
 export async function deleteProduct(id: string): Promise<void> {
   await ready();
   await sql`DELETE FROM products WHERE id = ${id}`;
@@ -421,7 +540,7 @@ export async function findProductByBarcode(barcode: string): Promise<Product | n
   await ready();
   const normalized = barcode.trim();
   const rows = (await sql`SELECT * FROM products WHERE TRIM(barcode) = ${normalized} LIMIT 1`) as Product[];
-  return rows[0] ?? null;
+  return rows[0] ? applyProductHealth(rows[0]) : null;
 }
 
 /**
@@ -450,6 +569,16 @@ export async function upsertProductByBarcode(input: Product): Promise<Product> {
     return isBlank && input[key] ? input[key] : current;
   };
 
+  const candidateStock = input.stock !== undefined && input.stock !== null && input.stock > 0 ? input.stock : existing.stock;
+  const candidateExpiry = input.expiryDate || existing.expiryDate;
+  const candidateMinStock = input.minStock !== undefined && input.minStock !== null && input.minStock > 0 ? input.minStock : existing.minStock;
+
+  const health = calculateProductHealth({
+    stock: candidateStock,
+    minStock: candidateMinStock,
+    expiryDate: candidateExpiry,
+  });
+
   const merged: Product = {
     ...existing,
     name: fill("name"),
@@ -460,16 +589,16 @@ export async function upsertProductByBarcode(input: Product): Promise<Product> {
     supplier: fill("supplier"),
     warehouse: fill("warehouse"),
     shelf: fill("shelf"),
-    stock: fill("stock"),
-    minStock: fill("minStock"),
+    stock: candidateStock,
+    minStock: candidateMinStock,
     maxStock: fill("maxStock"),
     unit: fill("unit"),
     mfgDate: fill("mfgDate"),
-    expiryDate: fill("expiryDate"),
+    expiryDate: candidateExpiry,
     lastRestocked: fill("lastRestocked"),
     lastUpdated: new Date().toISOString().slice(0, 10),
-    healthScore: input.healthScore || existing.healthScore,
-    status: input.status || existing.status,
+    healthScore: health.healthScore,
+    status: health.status,
     image: fill("image"),
     description: fill("description"),
     packageSize: fill("packageSize"),
@@ -489,16 +618,54 @@ export async function listBatches(productId?: string): Promise<ProductBatch[]> {
   }
   return (await sql`SELECT * FROM product_batches ORDER BY "scannedAt" DESC NULLS LAST`) as ProductBatch[];
 }
+
 export async function createBatch(b: ProductBatch): Promise<ProductBatch> {
   await ready();
   await sql`INSERT INTO product_batches (id, "productId", barcode, "batchNumber", "lotNumber", quantity, "mfgDate", "expiryDate", mrp, "netWeight", warehouse, "scannedBy", "scannedAt", "ocrConfidence")
              VALUES (${b.id}, ${b.productId}, ${b.barcode}, ${b.batchNumber}, ${b.lotNumber}, ${b.quantity}, ${b.mfgDate}, ${b.expiryDate}, ${b.mrp}, ${b.netWeight}, ${b.warehouse}, ${b.scannedBy}, ${b.scannedAt}, ${b.ocrConfidence ? JSON.stringify(b.ocrConfidence) : null})`;
+
+  // Synchronize parent product's batch, expiryDate, stock, and health status
+  try {
+    const [parent] = (await sql`SELECT * FROM products WHERE id = ${b.productId} LIMIT 1`) as Product[];
+    if (parent) {
+      const parentStock = Number(parent.stock) || 0;
+      const newStock = parentStock + (Number(b.quantity) || 0);
+      const newExpiry = b.expiryDate || parent.expiryDate;
+      const newBatch = b.batchNumber || parent.batch;
+      const newMfg = b.mfgDate || parent.mfgDate;
+      const newWh = b.warehouse || parent.warehouse;
+      const health = calculateProductHealth({
+        stock: newStock,
+        minStock: parent.minStock,
+        expiryDate: newExpiry,
+      });
+
+      await sql`
+        UPDATE products
+        SET
+          stock = ${newStock},
+          batch = ${newBatch},
+          "mfgDate" = ${newMfg},
+          "expiryDate" = ${newExpiry},
+          warehouse = ${newWh},
+          status = ${health.status},
+          "healthScore" = ${health.healthScore},
+          "lastRestocked" = ${new Date().toISOString().slice(0, 10)},
+          "lastUpdated" = ${new Date().toISOString().slice(0, 10)}
+        WHERE id = ${b.productId}
+      `;
+    }
+  } catch (syncErr) {
+    console.error("Failed to sync parent product in createBatch:", syncErr);
+  }
+
   return b;
 }
+
 export async function updateBatch(productId: string, batch: Partial<ProductBatch>): Promise<void> {
   await ready();
 
-  const result = await sql`
+  await sql`
     UPDATE product_batches
     SET
       "batchNumber" = ${batch.batchNumber ?? ""},
@@ -507,10 +674,31 @@ export async function updateBatch(productId: string, batch: Partial<ProductBatch
       quantity = ${batch.quantity ?? 0},
       warehouse = ${batch.warehouse ?? ""}
     WHERE "productId" = ${productId}
-    RETURNING id;
   `;
 
-  
+  try {
+    const [parent] = (await sql`SELECT * FROM products WHERE id = ${productId} LIMIT 1`) as Product[];
+    if (parent) {
+      const newExpiry = batch.expiryDate || parent.expiryDate;
+      const newStock = batch.quantity !== undefined ? Number(batch.quantity) : parent.stock;
+      const health = calculateProductHealth({
+        stock: newStock,
+        minStock: parent.minStock,
+        expiryDate: newExpiry,
+      });
+      await sql`
+        UPDATE products
+        SET
+          status = ${health.status},
+          "healthScore" = ${health.healthScore},
+          "expiryDate" = ${newExpiry},
+          "lastUpdated" = ${new Date().toISOString().slice(0, 10)}
+        WHERE id = ${productId}
+      `;
+    }
+  } catch (syncErr) {
+    console.error("Failed to sync parent product in updateBatch:", syncErr);
+  }
 }
 
 // ---------- Categories ----------
@@ -871,16 +1059,19 @@ export async function deleteTask(id: string): Promise<void> {
 export interface DashboardKpis {
   totalProducts: number;
   expiringCount: number;
+  expiredCount: number;
   lowStockCount: number;
   healthyCount: number;
 }
 
 export async function getDashboardKpis(): Promise<DashboardKpis> {
   await ready();
+  await syncInventoryHealthDb().catch(() => {});
   const [row] = await sql`
     SELECT
       COUNT(*)::int                                                   AS "totalProducts",
       COUNT(*) FILTER (WHERE status = 'expiring')::int               AS "expiringCount",
+      COUNT(*) FILTER (WHERE status = 'expired')::int                AS "expiredCount",
       COUNT(*) FILTER (WHERE status = 'low')::int                    AS "lowStockCount",
       COUNT(*) FILTER (WHERE status = 'healthy')::int                AS "healthyCount"
     FROM products
@@ -914,6 +1105,7 @@ export interface ExpiryAlertItem {
 
 export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
   await ready();
+  await syncInventoryHealthDb().catch(() => {});
   const rows = await sql`
     SELECT
       id,
@@ -934,6 +1126,7 @@ export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
       END AS severity
     FROM products
     WHERE status IN ('expiring', 'expired')
+       OR ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < CURRENT_DATE)
     ORDER BY
       CASE WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
         THEN "expiryDate"::date END ASC NULLS LAST

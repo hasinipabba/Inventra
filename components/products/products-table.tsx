@@ -7,6 +7,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { HealthRing } from "@/components/ui/health-ring";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { calculateProductHealth } from "@/lib/product-health";
 
 const STATUS_FILTERS: { label: string; value: ProductStatus | "all" }[] = [
   { label: "All", value: "all" },
@@ -96,12 +97,18 @@ export function ProductsTable() {
   async function save(p: Product) {
     setSaving(true);
     setError(null);
-    const exists = products.some((x) => x.id === p.id);
+    const health = calculateProductHealth(p);
+    const toSave: Product = {
+      ...p,
+      status: health.status,
+      healthScore: health.healthScore,
+    };
+    const exists = products.some((x) => x.id === toSave.id);
     try {
-      const res = await fetch(exists ? `/api/products/${p.id}` : "/api/products", {
+      const res = await fetch(exists ? `/api/products/${toSave.id}` : "/api/products", {
         method: exists ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(p),
+        body: JSON.stringify(toSave),
       });
       if (!res.ok) throw new Error("Save failed");
       const saved = (await res.json()) as Product;
@@ -269,8 +276,14 @@ function ProductModal({
   onClose: () => void;
   onSave: (p: Product) => void;
 }) {
-  const [form, setForm] = useState<Product>(
-    product ?? {
+  const [form, setForm] = useState<Product>(() => {
+    if (product) return product;
+    const initialHealth = calculateProductHealth({
+      stock: 0,
+      minStock: 40,
+      expiryDate: "",
+    });
+    return {
       id: `prod-${Date.now()}`,
       name: "",
       sku: "",
@@ -289,11 +302,11 @@ function ProductModal({
       expiryDate: "",
       lastRestocked: "",
       lastUpdated: new Date().toISOString().slice(0, 10),
-      healthScore: 80,
-      status: "healthy",
+      healthScore: initialHealth.healthScore,
+      status: initialHealth.status,
       image: "",
-    }
-  );
+    };
+  });
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-fade-in">
@@ -308,7 +321,12 @@ function ProductModal({
           className="grid grid-cols-2 gap-3 p-5"
           onSubmit={(e) => {
             e.preventDefault();
-            onSave(form);
+            const health = calculateProductHealth(form);
+            onSave({
+              ...form,
+              status: health.status,
+              healthScore: health.healthScore,
+            });
           }}
         >
           <Field label="Product Name" className="col-span-2" value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
@@ -322,6 +340,33 @@ function ProductModal({
           <Field label="Unit" value={form.unit} onChange={(v) => setForm({ ...form, unit: v })} />
           <Field label="Expiry Date" type="date" value={form.expiryDate} onChange={(v) => setForm({ ...form, expiryDate: v })} />
           <Field label="Batch Number" value={form.batch} onChange={(v) => setForm({ ...form, batch: v })} mono />
+          <div className="col-span-2">
+            {(() => {
+              if (!form.expiryDate) return null;
+              const h = calculateProductHealth({
+                stock: form.stock,
+                minStock: form.minStock,
+                expiryDate: form.expiryDate,
+              });
+              if (h.isExpired) {
+                return (
+                  <div className="flex items-center gap-2 rounded-lg border border-out/40 bg-out/10 p-2 text-xs text-out font-medium">
+                    <AlertCircle size={14} className="shrink-0" />
+                    <span>CRITICAL: {h.reason}. Product will be flagged as Expired (0% health).</span>
+                  </div>
+                );
+              }
+              if (h.isExpiringSoon) {
+                return (
+                  <div className="flex items-center gap-2 rounded-lg border border-expiring/40 bg-expiring/10 p-2 text-xs text-expiring font-medium">
+                    <AlertCircle size={14} className="shrink-0" />
+                    <span>WARNING: {h.reason}. Product will be flagged as Expiring Soon ({h.healthScore}% health).</span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
           <div className="col-span-2">
             <label className="text-xs font-medium text-muted">Product Image</label>
             <div className="mt-1 flex items-center gap-3">

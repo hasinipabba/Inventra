@@ -26,7 +26,17 @@ export async function POST(req: Request) {
     const existedBefore = body.barcode ? await findProductByBarcode(body.barcode) : null;
     const saved = await upsertProductByBarcode(body);
 
-    if (saved.stock <= 0) {
+    if (saved.status === "expired") {
+      await pushNotification({
+        category: "Expiry",
+        message: `HIGH PRIORITY: ${saved.name} (lot ${saved.batch || "N/A"}) expired on ${saved.expiryDate}. Remove from stock immediately.`,
+      });
+    } else if (saved.status === "expiring") {
+      await pushNotification({
+        category: "Expiry",
+        message: `${saved.name} (lot ${saved.batch || "N/A"}) expires on ${saved.expiryDate}. Plan to sell or rotate soon.`,
+      });
+    } else if (saved.stock <= 0) {
       await pushNotification({ category: "Out of Stock", message: `${saved.name} is out of stock at ${saved.warehouse || "its warehouse"}.` });
     } else if (saved.stock <= saved.minStock) {
       await pushNotification({ category: "Low Stock", message: `${saved.name} is running low (${saved.stock} left, min ${saved.minStock}).` });

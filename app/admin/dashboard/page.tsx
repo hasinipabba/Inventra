@@ -17,6 +17,7 @@ const CategoryDonut = dynamic(
 );
 
 function expiryPillStyle(days: number) {
+  if (days < 0) return { bg: "#3D1A1A", color: "#F85149" };
   if (days <= 2) return { bg: "#3D1A1A", color: "#F85149" };
   if (days <= 4) return { bg: "#2D2010", color: "#E3A941" };
   return { bg: "#1A2510", color: "#6B8F3E" };
@@ -28,7 +29,11 @@ export default async function DashboardPage() {
     getDashboardKpis(),
     getRecentProducts(6),
   ]);
-  const { totalProducts, expiringCount, lowStockCount, healthyCount: safeCount } = kpis;
+  const { totalProducts, expiringCount, expiredCount = 0, lowStockCount, healthyCount: safeCount } = kpis;
+  const flaggedCount = (expiringCount || 0) + (expiredCount || 0);
+  const flaggedSubtitle = expiredCount > 0
+    ? `${expiredCount} expired · ${expiringCount} expiring`
+    : `${expiringCount} SKUs flagged`;
 
   const STAT_CARDS = [
     {
@@ -39,10 +44,10 @@ export default async function DashboardPage() {
       icon: Package,
     },
     {
-      label: "Expiring in 7 Days",
-      value: expiringCount,
+      label: "Expiring & Expired",
+      value: flaggedCount,
       color: "#F85149",
-      subtitle: `${expiringCount} SKUs flagged`,
+      subtitle: flaggedSubtitle,
       icon: AlertTriangle,
     },
     {
@@ -105,8 +110,11 @@ export default async function DashboardPage() {
             </div>
             <div className="divide-y divide-[var(--card-border)]">
               {visibleAlerts.map((item) => {
+                const isExpired = item.daysRemaining < 0;
                 const pill = expiryPillStyle(item.daysRemaining);
-                const days = Math.max(item.daysRemaining, 0);
+                const label = isExpired
+                  ? `EXPIRED (${Math.abs(item.daysRemaining)}D AGO)`
+                  : `${Math.max(item.daysRemaining, 0)}D LEFT`;
                 return (
                   <div key={item.id} className="flex items-center justify-between gap-3 py-2.5">
                     <div className="flex min-w-0 items-center gap-3">
@@ -120,7 +128,7 @@ export default async function DashboardPage() {
                       className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
                       style={{ background: pill.bg, color: pill.color }}
                     >
-                      {days}D LEFT
+                      {label}
                     </span>
                   </div>
                 );
