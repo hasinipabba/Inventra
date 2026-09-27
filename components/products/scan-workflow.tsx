@@ -20,7 +20,7 @@ type Stage =
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string; canRetry: boolean };
 
-const emptyBatch = { quantity: "", batchNumber: "", lotNumber: "", mfgDate: "", expiryDate: "", warehouse: "", mrp: "", netWeight: "" };
+const emptyBatch = { quantity: "1", batchNumber: "", lotNumber: "", mfgDate: "", expiryDate: "", warehouse: "", mrp: "", netWeight: "" };
 const emptyDraft: Partial<Product> = { name: "", brand: "", category: "", description: "", packageSize: "", weight: "", manufacturer: "", image: "" };
 
 export function ScanWorkflow() {
@@ -92,24 +92,23 @@ export function ScanWorkflow() {
   }
 
   async function saveNewProductWithBatch(barcode: string, draft: Partial<Product>, sourceLabel: string) {
-    const quantity = Number(batchForm.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setStage({ kind: "error", message: "Enter a valid quantity received before saving.", canRetry: true });
-      return;
-    }
+    const rawQty = Number(batchForm.quantity);
+    const quantity = Number.isFinite(rawQty) && rawQty > 0 ? rawQty : 1;
+    const warehouse = batchForm.warehouse || warehouseNames[0] || "Warehouse A — Hyderabad";
     setSaving(true);
     try {
       const sku = `SKU-${barcode.slice(-6)}-${Date.now().toString().slice(-4)}`;
+      const name = draft.name?.trim() || `Product ${batchForm.batchNumber || barcode}`;
       const payload: Product = {
         id: `prod-${Date.now()}`,
-        name: draft.name || "",
+        name,
         sku,
         barcode,
         category: draft.category || "Uncategorized",
         brand: draft.brand || "",
         batch: batchForm.batchNumber,
         supplier: "",
-        warehouse: batchForm.warehouse,
+        warehouse,
         shelf: "",
         stock: 0,
         minStock: 10,
@@ -149,7 +148,7 @@ export function ScanWorkflow() {
           expiryDate: batchForm.expiryDate,
           mrp: batchForm.mrp,
           netWeight: batchForm.netWeight,
-          warehouse: batchForm.warehouse,
+          warehouse,
           scannedBy: "Ananya Sharma",
         }),
       });
@@ -172,11 +171,9 @@ export function ScanWorkflow() {
   }
 
   async function saveBatch(product: Product, barcode: string) {
-    const quantity = Number(batchForm.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setStage({ kind: "error", message: "Enter a valid quantity before saving.", canRetry: true });
-      return;
-    }
+    const rawQty = Number(batchForm.quantity);
+    const quantity = Number.isFinite(rawQty) && rawQty > 0 ? rawQty : 1;
+    const warehouse = batchForm.warehouse || product.warehouse || warehouseNames[0] || "Warehouse A — Hyderabad";
     setSaving(true);
     try {
       const res = await fetch("/api/batches", {
@@ -192,7 +189,7 @@ export function ScanWorkflow() {
           expiryDate: batchForm.expiryDate,
           mrp: batchForm.mrp,
           netWeight: batchForm.netWeight,
-          warehouse: batchForm.warehouse,
+          warehouse,
           scannedBy: "Ananya Sharma",
         }),
       });
@@ -210,7 +207,7 @@ export function ScanWorkflow() {
           batch: batchForm.batchNumber || product.batch,
           mfgDate: batchForm.mfgDate || product.mfgDate,
           expiryDate: batchForm.expiryDate || product.expiryDate,
-          warehouse: batchForm.warehouse || product.warehouse,
+          warehouse,
           lastRestocked: new Date().toISOString().slice(0, 10),
           lastUpdated: new Date().toISOString().slice(0, 10),
         }),
@@ -478,6 +475,44 @@ function BatchAndProductForm({
 
   return (
     <div className="space-y-4">
+      {/* Top action header with immediate Save button */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/10 p-3">
+        <div>
+          <h4 className="text-sm font-semibold text-text">
+            {stage.kind === "existing_product" ? "Product & Batch Details" : "New Scanned Item"}
+          </h4>
+          <p className="text-xs text-muted">
+            {stage.kind === "existing_product"
+              ? "Review and click Save to log batch."
+              : "Review details and click Save to add to inventory."}
+          </p>
+        </div>
+        {stage.kind === "existing_product" ? (
+          <Button
+            size="sm"
+            variant="primary"
+            className="font-semibold shadow-sm"
+            disabled={saving}
+            onClick={() => onSaveBatch(stage.product)}
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save to Inventory
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="primary"
+            className="font-semibold shadow-sm"
+            disabled={saving}
+            onClick={() => {
+              const nameToSave = draft.name?.trim() || `Product ${batchForm.batchNumber || stage.barcode}`;
+              onSaveNewProduct({ ...draft, name: nameToSave });
+            }}
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save to Inventory
+          </Button>
+        )}
+      </div>
+
       {stage.kind === "existing_product" && (
         <div className="flex items-center gap-2 rounded-lg border border-healthy/30 bg-healthy/10 p-2.5 text-sm text-healthy">
           <CheckCircle2 size={15} /> Found in database — {stage.product.name}
@@ -599,15 +634,37 @@ function BatchAndProductForm({
           </p>
         )}
 
-        {stage.kind === "existing_product" ? (
-          <Button size="sm" disabled={saving} onClick={() => onSaveBatch(stage.product)}>
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save to inventory
-          </Button>
-        ) : (
-          <Button size="sm" disabled={saving || !draft.name} onClick={() => onSaveNewProduct(draft)}>
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save product & batch to inventory
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+          <p className="text-xs text-muted">
+            {stage.kind === "existing_product"
+              ? "Ready to log this delivery batch to stock."
+              : "Product name will auto-default if left blank."}
+          </p>
+          {stage.kind === "existing_product" ? (
+            <Button
+              size="lg"
+              variant="primary"
+              className="min-w-48 font-semibold shadow-md"
+              disabled={saving}
+              onClick={() => onSaveBatch(stage.product)}
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save to Inventory
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              variant="primary"
+              className="min-w-56 font-semibold shadow-md"
+              disabled={saving}
+              onClick={() => {
+                const nameToSave = draft.name?.trim() || `Product ${batchForm.batchNumber || stage.barcode}`;
+                onSaveNewProduct({ ...draft, name: nameToSave });
+              }}
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Product & Batch
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
