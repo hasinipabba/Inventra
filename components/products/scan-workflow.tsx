@@ -20,7 +20,7 @@ type Stage =
   | { kind: "saved"; message: string }
   | { kind: "error"; message: string; canRetry: boolean };
 
-const emptyBatch = { quantity: "", batchNumber: "", lotNumber: "", mfgDate: "", expiryDate: "", warehouse: "" };
+const emptyBatch = { quantity: "", batchNumber: "", lotNumber: "", mfgDate: "", expiryDate: "", warehouse: "", mrp: "", netWeight: "" };
 const emptyDraft: Partial<Product> = { name: "", brand: "", category: "", description: "", packageSize: "", weight: "", manufacturer: "", image: "" };
 
 export function ScanWorkflow() {
@@ -124,7 +124,7 @@ export function ScanWorkflow() {
         image: draft.image || "",
         description: draft.description || "",
         packageSize: draft.packageSize || "",
-        weight: draft.weight || "",
+        weight: draft.weight || batchForm.netWeight || "",
         manufacturer: draft.manufacturer || "",
         source: (sourceLabel as Product["source"]) || "manual",
       };
@@ -147,6 +147,8 @@ export function ScanWorkflow() {
           lotNumber: batchForm.lotNumber,
           mfgDate: batchForm.mfgDate,
           expiryDate: batchForm.expiryDate,
+          mrp: batchForm.mrp,
+          netWeight: batchForm.netWeight,
           warehouse: batchForm.warehouse,
           scannedBy: "Ananya Sharma",
         }),
@@ -188,6 +190,8 @@ export function ScanWorkflow() {
           lotNumber: batchForm.lotNumber,
           mfgDate: batchForm.mfgDate,
           expiryDate: batchForm.expiryDate,
+          mrp: batchForm.mrp,
+          netWeight: batchForm.netWeight,
           warehouse: batchForm.warehouse,
           scannedBy: "Ananya Sharma",
         }),
@@ -219,7 +223,7 @@ export function ScanWorkflow() {
     }
   }
 
-  function applyOcr(extraction: OcrExtraction, setDraftField?: (field: string, value: string) => void) {
+  function applyOcr(extraction: OcrExtraction) {
     const low = new Set<string>();
     const map: Record<string, keyof typeof batchForm> = {
       expiryDate: "expiryDate",
@@ -227,6 +231,8 @@ export function ScanWorkflow() {
       batchNumber: "batchNumber",
       lotNumber: "lotNumber",
       quantity: "quantity",
+      mrp: "mrp",
+      netWeight: "netWeight",
     };
     const next = { ...batchForm };
     for (const [ocrKey, formKey] of Object.entries(map)) {
@@ -256,7 +262,12 @@ export function ScanWorkflow() {
             <button
               key={tab.id}
               type="button"
-              onClick={() => setInputMethod(tab.id)}
+              onClick={() => {
+                setInputMethod(tab.id);
+                if (stage.kind === "error") {
+                  setStage({ kind: "scanning" });
+                }
+              }}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-colors ${
                 inputMethod === tab.id ? "bg-surface text-text shadow-card" : "text-muted hover:text-text"
               }`}
@@ -371,6 +382,13 @@ function BatchAndProductForm({
       ocrLowConfidence.has(field) ? "border-low ring-1 ring-low/50" : "border-border"
     }`;
 
+  const handleOcrExtracted = (extraction: OcrExtraction) => {
+    applyOcr(extraction);
+    if (isNewOrManual && extraction.fields.netWeight?.value && !draft.weight) {
+      setDraft((d) => ({ ...d, weight: extraction.fields.netWeight?.value }));
+    }
+  };
+
   return (
     <div className="space-y-4">
       {stage.kind === "existing_product" && (
@@ -423,7 +441,7 @@ function BatchAndProductForm({
           <p className="text-xs font-medium text-muted">
             {stage.kind === "existing_product" ? "Batch details for this delivery" : "Batch details (dates, batch/lot, quantity)"}
           </p>
-          <OcrCapture onExtracted={applyOcr} barcode={stage.barcode} />
+          <OcrCapture onExtracted={handleOcrExtracted} barcode={stage.barcode} />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="space-y-1">
@@ -466,6 +484,26 @@ function BatchAndProductForm({
           <label className="space-y-1">
             <span className="text-xs text-muted">Expiry date</span>
             <input type="date" className={inputClass("expiryDate")} value={batchForm.expiryDate} onChange={(e) => setBatchForm({ ...batchForm, expiryDate: e.target.value })} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted">MRP (₹)</span>
+            <input
+              type="text"
+              placeholder="e.g. 199.00"
+              className={inputClass("mrp")}
+              value={batchForm.mrp}
+              onChange={(e) => setBatchForm({ ...batchForm, mrp: e.target.value })}
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-muted">Net Weight / Volume</span>
+            <input
+              type="text"
+              placeholder="e.g. 500g, 1L"
+              className={inputClass("netWeight")}
+              value={batchForm.netWeight}
+              onChange={(e) => setBatchForm({ ...batchForm, netWeight: e.target.value })}
+            />
           </label>
         </div>
         {ocrLowConfidence.size > 0 && (

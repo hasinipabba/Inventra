@@ -61,24 +61,43 @@ export function OcrCameraCapture({ onUsePhoto, onClose }: Props) {
       setRect({ ...drag.rect, w, h: w / ASPECT_RATIO });
     }
   }
+  const [aspectRatio, setAspectRatio] = useState<number>(16 / 9);
+
+  function handleVideoMetadata(e: React.SyntheticEvent<HTMLVideoElement>) {
+    const v = e.currentTarget;
+    if (v.videoWidth && v.videoHeight) {
+      setAspectRatio(v.videoWidth / v.videoHeight);
+    }
+  }
+
   function capture() {
-    const video = videoRef.current; if (!video?.videoWidth) return;
+    const video = videoRef.current;
+    if (!video?.videoWidth || !video?.videoHeight) return;
     const canvas = document.createElement("canvas");
-    const sx = rect.x * video.videoWidth; const sy = rect.y * video.videoHeight;
-    const sw = rect.w * video.videoWidth; const sh = rect.h * video.videoHeight;
-    canvas.width = Math.round(sw); canvas.height = Math.round(sh);
-    canvas.getContext("2d")?.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    const enhanced = sharpenImageToCanvas(canvas, { upscale: 2, binarizeOutput: true });
-    previewCanvasRef.current = enhanced; setPreviewUrl(enhanced.toDataURL("image/png")); setFlash(true);
-    window.setTimeout(() => setFlash(false), 180); setMode("preview");
+    const sx = Math.max(0, Math.floor(rect.x * video.videoWidth));
+    const sy = Math.max(0, Math.floor(rect.y * video.videoHeight));
+    const sw = Math.min(video.videoWidth - sx, Math.ceil(rect.w * video.videoWidth));
+    const sh = Math.min(video.videoHeight - sy, Math.ceil(rect.h * video.videoHeight));
+    if (sw <= 0 || sh <= 0) return;
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    const enhanced = sharpenImageToCanvas(canvas, { upscale: 2, binarizeOutput: false });
+    previewCanvasRef.current = enhanced;
+    setPreviewUrl(enhanced.toDataURL("image/png"));
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 180);
+    setMode("preview");
   }
   function retake() { previewCanvasRef.current = null; setPreviewUrl(null); setMode("live"); }
 
   return <div className="fixed inset-0 z-50 flex min-h-dvh flex-col bg-black text-white">
     <header className="flex items-center justify-between px-4 py-4"><div><p className="text-sm font-semibold">Expiry label capture</p><p className="text-xs text-white/65">Align only the printed expiry or batch area.</p></div><Button type="button" size="sm" variant="ghost" className="text-white" onClick={onClose}><X size={15} /> Close camera</Button></header>
-    <main className="relative flex flex-1 items-center justify-center overflow-hidden bg-black">
-      {mode === "live" && <div className="relative w-full max-w-5xl overflow-hidden bg-black" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null; }}>
-        <video ref={videoRef} className="aspect-video w-full object-cover" muted playsInline autoPlay />
+    <main className="relative flex flex-1 items-center justify-center overflow-hidden bg-black p-2">
+      {mode === "live" && <div className="relative w-full max-w-4xl overflow-hidden rounded-lg bg-black" style={{ aspectRatio: `${aspectRatio}` }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null; }}>
+        <video ref={videoRef} className="h-full w-full object-contain" muted playsInline autoPlay onLoadedMetadata={handleVideoMetadata} />
         <div className="pointer-events-none absolute inset-0 bg-black/35" />
         <p className="pointer-events-none absolute left-1/2 top-[calc(40%-2.25rem)] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium">Align the expiry date inside the box</p>
         <div className="absolute border border-white/90 bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.48)]" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}>
