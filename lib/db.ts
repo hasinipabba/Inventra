@@ -375,6 +375,8 @@ async function recalcCategoryCounts() {
 // ---------- Inventory Health & Expiry Synchronization ----------
 export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }> {
   try {
+    const today = new Date().toISOString().slice(0, 10);
+
     // 1. Sync earliest batch expiryDate to product if batches exist
     await sql`
       UPDATE products p
@@ -396,9 +398,9 @@ export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }>
       UPDATE products
       SET status = 'expired',
           "healthScore" = 0,
-          "lastUpdated" = CURRENT_DATE::text
+          "lastUpdated" = ${today}
       WHERE "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-        AND "expiryDate"::date < CURRENT_DATE
+        AND "expiryDate"::date < ${today}::date
         AND (status != 'expired' OR "healthScore" != 0);
     `;
 
@@ -406,11 +408,11 @@ export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }>
     const expiringRes = await sql`
       UPDATE products
       SET status = 'expiring',
-          "healthScore" = GREATEST(15, LEAST(55, ROUND(15 + (("expiryDate"::date - CURRENT_DATE)::float / 30.0) * 40))),
-          "lastUpdated" = CURRENT_DATE::text
+          "healthScore" = GREATEST(15, LEAST(55, ROUND(15 + (("expiryDate"::date - ${today}::date)::float / 30.0) * 40))),
+          "lastUpdated" = ${today}
       WHERE "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-        AND "expiryDate"::date >= CURRENT_DATE
-        AND ("expiryDate"::date - CURRENT_DATE) <= 30
+        AND "expiryDate"::date >= ${today}::date
+        AND ("expiryDate"::date - ${today}::date) <= 30
         AND status NOT IN ('expired', 'expiring');
     `;
 
@@ -424,7 +426,7 @@ export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }>
         AND (
           "expiryDate" IS NULL
           OR "expiryDate" = ''
-          OR NOT ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < CURRENT_DATE)
+          OR NOT ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < ${today}::date)
         );
     `;
 
@@ -441,8 +443,8 @@ export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }>
           OR "expiryDate" = ''
           OR (
             "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-            AND "expiryDate"::date >= CURRENT_DATE
-            AND ("expiryDate"::date - CURRENT_DATE) > 30
+            AND "expiryDate"::date >= ${today}::date
+            AND ("expiryDate"::date - ${today}::date) > 30
           )
         );
     `;
@@ -459,8 +461,8 @@ export async function syncInventoryHealthDb(): Promise<{ updatedCount: number }>
           OR "expiryDate" = ''
           OR (
             "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-            AND "expiryDate"::date >= CURRENT_DATE
-            AND ("expiryDate"::date - CURRENT_DATE) > 30
+            AND "expiryDate"::date >= ${today}::date
+            AND ("expiryDate"::date - ${today}::date) > 30
           )
         );
     `;
@@ -1106,6 +1108,7 @@ export interface ExpiryAlertItem {
 export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
   await ready();
   await syncInventoryHealthDb().catch(() => {});
+  const today = new Date().toISOString().slice(0, 10);
   const rows = await sql`
     SELECT
       id,
@@ -1115,18 +1118,18 @@ export async function getExpiryAlerts(limit = 8): Promise<ExpiryAlertItem[]> {
       "expiryDate",
       CASE
         WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-        THEN ("expiryDate"::date - CURRENT_DATE)::int
+        THEN ("expiryDate"::date - ${today}::date)::int
         ELSE 0
       END AS "daysRemaining",
       CASE
         WHEN status = 'expired' THEN 'critical'
         WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
-          AND ("expiryDate"::date - CURRENT_DATE) <= 3 THEN 'critical'
+          AND ("expiryDate"::date - ${today}::date) <= 3 THEN 'critical'
         ELSE 'warning'
       END AS severity
     FROM products
     WHERE status IN ('expiring', 'expired')
-       OR ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < CURRENT_DATE)
+       OR ("expiryDate" ~ '^\d{4}-\d{2}-\d{2}$' AND "expiryDate"::date < ${today}::date)
     ORDER BY
       CASE WHEN "expiryDate" ~ '^\d{4}-\d{2}-\d{2}$'
         THEN "expiryDate"::date END ASC NULLS LAST

@@ -285,12 +285,13 @@ export async function runExpiryChecker(): Promise<ExpiryCheckSummary> {
         continue;
       }
 
+      const todayStr = new Date().toISOString().slice(0, 10);
       if (result.status === "expired") {
         summary.expiredCount += 1;
-        await sql`UPDATE products SET status = 'expired', "healthScore" = 0, "lastUpdated" = CURRENT_DATE::text WHERE id = ${result.productId}`;
+        await sql`UPDATE products SET status = 'expired', "healthScore" = 0, "lastUpdated" = ${todayStr} WHERE id = ${result.productId}`;
       } else {
         summary.expiringSoonCount += 1;
-        await sql`UPDATE products SET status = 'expiring', "lastUpdated" = CURRENT_DATE::text WHERE id = ${result.productId} AND status != 'expired'`;
+        await sql`UPDATE products SET status = 'expiring', "lastUpdated" = ${todayStr} WHERE id = ${result.productId} AND status != 'expired'`;
       }
 
       const created = await pushNotification({ category: result.category, message: result.message });
