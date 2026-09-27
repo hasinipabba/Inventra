@@ -181,6 +181,12 @@ export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
         // ignore
       }
 
+      // If no 1D barcode could be read, seamlessly hand off to Packaging OCR & AI
+      if (onOcrFallback) {
+        onOcrFallback(cropCanvas);
+        return;
+      }
+
       setError(
         "Could not detect barcode bars or printed numbers in this photo. Please crop tightly to the barcode (including the numbers underneath), or type the code in the 'Manual Entry' tab."
       );

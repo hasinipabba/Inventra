@@ -23,6 +23,7 @@ export type ScannerErrorKind =
 interface Props {
   onDetected: (barcode: string, format: string) => void;
   onError?: (kind: ScannerErrorKind, message: string) => void;
+  onCaptureFrame?: (canvas: HTMLCanvasElement) => void;
   active: boolean;
 }
 
@@ -35,11 +36,24 @@ declare global {
   }
 }
 
-export function BarcodeScanner({ onDetected, onError, active }: Props) {
+export function BarcodeScanner({ onDetected, onError, onCaptureFrame, active }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  function handleSnapFrame() {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+    const snapCanvas = document.createElement("canvas");
+    snapCanvas.width = video.videoWidth;
+    snapCanvas.height = video.videoHeight;
+    const ctx = snapCanvas.getContext("2d", { willReadFrequently: true });
+    if (ctx) {
+      ctx.drawImage(video, 0, 0);
+      onCaptureFrame?.(snapCanvas);
+    }
+  }
   const zxingControlsRef = useRef<{ stop: () => void } | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
@@ -309,6 +323,18 @@ export function BarcodeScanner({ onDetected, onError, active }: Props) {
           </div>
         )}
       </div>
+
+      {status === "scanning" && onCaptureFrame && (
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="w-full flex items-center justify-center gap-1.5 border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-medium"
+          onClick={handleSnapFrame}
+        >
+          <Camera size={14} className="text-[#A78BFA]" /> Snap Packet Photo with AI (If Barcode Won&apos;t Scan)
+        </Button>
+      )}
 
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-xs text-muted">

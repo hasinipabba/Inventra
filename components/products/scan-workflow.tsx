@@ -72,19 +72,41 @@ export function ScanWorkflow() {
         });
         return;
       }
-      if (res.status === 404) {
+      if (res.status === 404 || !res.ok) {
+        // Attempt quick AI deduction from barcode before opening empty manual entry
+        try {
+          const aiRes = await fetch("/api/ai/parse-product", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ barcode }),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json();
+            if (aiData.success && (aiData.product?.name || aiData.product?.brand)) {
+              setStage({
+                kind: "new_product",
+                barcode,
+                sourceLabel: "Groq AI",
+                draft: {
+                  name: aiData.product.name,
+                  brand: aiData.product.brand,
+                  category: aiData.product.category || "Packaged Foods",
+                  packageSize: aiData.product.packageSize,
+                  weight: aiData.product.weight,
+                  description: aiData.product.description,
+                  barcode,
+                },
+              });
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("AI deduction on lookup 404 fallback failed:", e);
+        }
+
         setStage({ kind: "manual_entry", barcode, reason: "This barcode isn't in your database or any connected product API yet." });
         return;
       }
-      if (res.status === 429) {
-        setStage({ kind: "manual_entry", barcode, reason: "External product lookup limit reached. You can enter details and save." });
-        return;
-      }
-      if (res.status === 504) {
-        setStage({ kind: "manual_entry", barcode, reason: "Lookup timed out. You can enter details and save." });
-        return;
-      }
-      setStage({ kind: "manual_entry", barcode, reason: data.error || "Enter details to save to inventory." });
     } catch {
       setStage({ kind: "manual_entry", barcode, reason: "Network lookup skipped. Enter details to save to inventory." });
     }
@@ -420,6 +442,7 @@ export function ScanWorkflow() {
           <BarcodeScanner
             active={stage.kind === "scanning" && inputMethod === "camera"}
             onDetected={(barcode) => handleDetected(barcode)}
+            onCaptureFrame={handleOcrFallback}
             onError={handleScanError}
           />
         )}
