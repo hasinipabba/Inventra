@@ -8,24 +8,19 @@ import { ImageCropSelector } from "./image-crop";
 
 interface Props {
   onDetected: (barcode: string, format: string) => void;
+  onOcrFallback?: (canvas: HTMLCanvasElement) => void;
 }
 
 /**
  * Decodes a real barcode/QR code from a still image the user uploads or
  * captures — no camera stream required.
- *
- * A full-scene photo (packet held in hand, background visible) makes the
- * barcode a tiny fraction of the image, which tanks decode reliability —
- * so the person crops to just the barcode first, same as the OCR flow.
- * The crop is then sharpened (grayscale + contrast + unsharp mask +
- * binarize + upscale) before decoding; if that doesn't work, the raw
- * (unsharpened) crop and the original full image are both tried too.
  */
-export function BarcodeImageUpload({ onDetected }: Props) {
+export function BarcodeImageUpload({ onDetected, onOcrFallback }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   function handleFile(file: File | undefined) {
     if (!file) return;
@@ -35,6 +30,7 @@ export function BarcodeImageUpload({ onDetected }: Props) {
   }
 
   async function decodeCrop(cropCanvas: HTMLCanvasElement, originalFile: File) {
+    lastCanvasRef.current = cropCanvas;
     setPendingFile(null);
     setBusy(true);
     setError(null);
@@ -50,7 +46,7 @@ export function BarcodeImageUpload({ onDetected }: Props) {
       hints.set(DecodeHintType.TRY_HARDER, true);
       const reader = new BrowserMultiFormatReader(hints);
 
-      // Attempt 1: sharpened + binarized crop — best odds for a phone photo.
+      // Attempt 1: sharpened + binarized crop
       try {
         const sharpened = sharpenImageToCanvas(cropCanvas, { upscale: 2, binarizeOutput: true });
         const result = reader.decodeFromCanvas(sharpened);
@@ -60,8 +56,7 @@ export function BarcodeImageUpload({ onDetected }: Props) {
         if (!(err instanceof NotFoundException)) console.warn("Sharpened crop decode error:", err);
       }
 
-      // Attempt 2: raw crop, unscaled — sharpening can occasionally over-process
-      // a barcode that was already crisp (e.g. a clean screenshot).
+      // Attempt 2: raw crop, unscaled
       try {
         const result = reader.decodeFromCanvas(cropCanvas);
         onDetected(result.getText(), String(result.getBarcodeFormat()));
@@ -70,7 +65,7 @@ export function BarcodeImageUpload({ onDetected }: Props) {
         if (!(err instanceof NotFoundException)) console.warn("Raw crop decode error:", err);
       }
 
-      // Attempt 3: the original full image, in case the crop cut off part of the code.
+      // Attempt 3: the original full image
       try {
         const img = await loadImageElement(originalFile);
         const result = await reader.decodeFromImageElement(img);
@@ -80,7 +75,7 @@ export function BarcodeImageUpload({ onDetected }: Props) {
         if (!(err instanceof NotFoundException)) console.warn("Full-image decode error:", err);
       }
 
-      setError("No barcode or QR code could be found. Try cropping tighter around just the barcode, straight-on and well-lit.");
+      setError("No standard barcode bars detected in this crop. If this is a product expiry/batch label, use OCR below.");
     } catch (err: any) {
       setError(err?.message || "Couldn't read that image.");
     } finally {
@@ -114,14 +109,31 @@ export function BarcodeImageUpload({ onDetected }: Props) {
           </>
         ) : (
           <>
-            <ImageUp size={14} /> Upload a photo of the barcode
+            <ImageUp size={14} /> Upload barcode photo
           </>
         )}
       </Button>
       {error && (
-        <p className="flex items-start gap-1 text-xs text-out">
-          <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {error}
-        </p>
+        <div className="space-y-2 rounded-lg border border-out/25 bg-out/5 p-2.5">
+          <p className="flex items-start gap-1 text-xs text-out">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {error}
+          </p>
+          {onOcrFallback && lastCanvasRef.current && (
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              className="w-full text-xs"
+              onClick={() => {
+                if (lastCanvasRef.current && onOcrFallback) {
+                  onOcrFallback(lastCanvasRef.current);
+                }
+              }}
+            >
+              Scan as Expiry / Batch Label with OCR
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

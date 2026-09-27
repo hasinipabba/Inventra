@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, PackageSearch, RotateCcw, Save, ScanBarcode, Camera as CameraIcon, ImageUp, Keyboard } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, PackageSearch, RotateCcw, Save, ScanBarcode, Camera as CameraIcon, ImageUp, Keyboard, ScanText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Product } from "@/lib/types";
@@ -9,7 +9,7 @@ import { BarcodeScanner, type ScannerErrorKind } from "./barcode-scanner";
 import { BarcodeImageUpload } from "./barcode-image-upload";
 import { ManualBarcodeEntry } from "./manual-barcode-entry";
 import { OcrCapture } from "./ocr-capture";
-import { LOW_CONFIDENCE_THRESHOLD, type OcrExtraction } from "./ocr-extract";
+import { runOcr, LOW_CONFIDENCE_THRESHOLD, type OcrExtraction } from "./ocr-extract";
 
 type Stage =
   | { kind: "scanning" }
@@ -25,7 +25,7 @@ const emptyDraft: Partial<Product> = { name: "", brand: "", category: "", descri
 
 export function ScanWorkflow() {
   const [stage, setStage] = useState<Stage>({ kind: "scanning" });
-  const [inputMethod, setInputMethod] = useState<"camera" | "upload" | "manual">("camera");
+  const [inputMethod, setInputMethod] = useState<"camera" | "upload" | "ocr" | "manual">("camera");
   const [batchForm, setBatchForm] = useState(emptyBatch);
   const [warehouseNames, setWarehouseNames] = useState<string[]>([]);
   useEffect(() => {
@@ -246,17 +246,80 @@ export function ScanWorkflow() {
     setOcrLowConfidence(low);
   }
 
+  async function handleDirectOcrExtracted(extraction: OcrExtraction) {
+    const cleanedDigits = extraction.rawText.match(/\b(?:\d[\s-]?){8,14}\b/);
+    const barcode = cleanedDigits ? cleanedDigits[0].replace(/[\s-]/g, "") : `OCR-${Date.now().toString().slice(-6)}`;
+
+    applyOcr(extraction);
+    setStage({ kind: "looking_up", barcode });
+
+    try {
+      const res = await fetch(`/api/scan/lookup?barcode=${encodeURIComponent(barcode)}`);
+      const data = await res.json();
+
+      if (res.ok && data.status === "database") {
+        setStage({ kind: "existing_product", product: data.product, barcode });
+        return;
+      }
+      if (res.ok && data.status === "external") {
+        setStage({
+          kind: "new_product",
+          barcode,
+          sourceLabel: data.provider,
+          draft: {
+            name: data.product.name,
+            brand: data.product.brand,
+            category: data.product.category,
+            description: data.product.description,
+            packageSize: data.product.packageSize,
+            weight: extraction.fields.netWeight?.value || data.product.weight || "",
+            manufacturer: data.product.manufacturer,
+            image: data.product.image,
+            barcode,
+          },
+        });
+        return;
+      }
+      setStage({
+        kind: "manual_entry",
+        barcode,
+        reason: "Packaging label scanned via OCR. Review details and enter product name.",
+      });
+    } catch {
+      setStage({
+        kind: "manual_entry",
+        barcode,
+        reason: "Packaging label scanned via OCR. Review details and enter product name.",
+      });
+    }
+  }
+
+  async function handleOcrFallback(canvas: HTMLCanvasElement) {
+    setStage({ kind: "looking_up", barcode: "Reading label via OCR…" });
+    try {
+      const extraction = await runOcr(canvas);
+      await handleDirectOcrExtracted(extraction);
+    } catch {
+      setStage({
+        kind: "error",
+        message: "Failed to read text from this crop. Try a clearer photo with high contrast.",
+        canRetry: true,
+      });
+    }
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="p-4">
         <h3 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold">
-          <ScanBarcode size={16} /> Scan a Barcode
+          <ScanBarcode size={16} /> Scan a Barcode or Label
         </h3>
 
         <div className="mb-3 flex gap-1 rounded-lg bg-surface2 p-1">
           {[
             { id: "camera" as const, label: "Camera", icon: CameraIcon },
-            { id: "upload" as const, label: "Upload Image", icon: ImageUp },
+            { id: "upload" as const, label: "Upload Barcode", icon: ImageUp },
+            { id: "ocr" as const, label: "Label OCR", icon: ScanText },
             { id: "manual" as const, label: "Manual Entry", icon: Keyboard },
           ].map((tab) => (
             <button
@@ -285,7 +348,21 @@ export function ScanWorkflow() {
           />
         )}
         {inputMethod === "upload" && stage.kind === "scanning" && (
-          <BarcodeImageUpload onDetected={(barcode) => handleDetected(barcode)} />
+          <BarcodeImageUpload
+            onDetected={(barcode) => handleDetected(barcode)}
+            onOcrFallback={handleOcrFallback}
+          />
+        )}
+        {inputMethod === "ocr" && stage.kind === "scanning" && (
+          <div className="space-y-3 rounded-lg border border-border bg-surface2/60 p-4">
+            <div>
+              <h4 className="text-xs font-semibold text-text">Direct Packaging Label OCR</h4>
+              <p className="text-[11px] text-muted">
+                Scan or upload packaging photos to automatically read Expiry Date, Manufacturing Date, Batch Number, MRP, and Net Weight.
+              </p>
+            </div>
+            <OcrCapture onExtracted={handleDirectOcrExtracted} />
+          </div>
         )}
         {inputMethod === "manual" && stage.kind === "scanning" && (
           <ManualBarcodeEntry onSubmit={(barcode) => handleDetected(barcode)} />
@@ -305,9 +382,19 @@ export function ScanWorkflow() {
 
       <Card className="p-4">
         {stage.kind === "scanning" && (
-          <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted">
-            <PackageSearch size={28} />
-            Point the camera at a barcode or QR code to begin.
+          <div className="flex h-full flex-col items-center justify-center gap-4 py-8 text-center text-sm text-muted">
+            <div className="flex flex-col items-center gap-2">
+              <PackageSearch size={32} className="text-primary/70" />
+              <p className="font-medium text-text">Scan a barcode or product label</p>
+              <p className="max-w-xs text-xs text-muted">
+                Scan or upload a barcode on the left, or use direct Label OCR to scan printed expiry dates and batch codes.
+              </p>
+            </div>
+            <div className="w-full max-w-sm rounded-lg border border-border bg-surface2/70 p-3 text-left">
+              <p className="mb-0.5 text-xs font-semibold text-text">Quick Label OCR</p>
+              <p className="mb-2 text-[11px] text-muted">Have a packaging photo with expiry date or batch number?</p>
+              <OcrCapture onExtracted={handleDirectOcrExtracted} />
+            </div>
           </div>
         )}
 
