@@ -3,69 +3,36 @@
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useRef } from "react";
 import {
+  PackagePlus,
   ScanBarcode,
-  ShieldCheck,
+  ScanText,
   BrainCircuit,
-  Zap,
-  ArrowRight,
-  Sparkles,
+  TrendingUp,
+  AlertTriangle,
+  BellRing,
+  LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
 import { blurFadeUp, staggerContainer } from "@/lib/motion";
 
 interface Step {
-  number: string;
   icon: LucideIcon;
   title: string;
-  tagline: string;
   description: string;
-  accent: "cyan" | "blue" | "purple";
-  tags: string[];
+  accent: "blue" | "cyan" | "purple";
 }
 
 const ACCENT_HEX = { blue: "#60A5FA", cyan: "#22D3EE", purple: "#A78BFA" } as const;
 
 const STEPS: Step[] = [
-  {
-    number: "01",
-    icon: ScanBarcode,
-    title: "Optical & AI Ingest",
-    tagline: "Instant catalog synchronization",
-    description:
-      "Decode Indian EAN-13 barcodes in sub-seconds against local databases, parse supplier invoice PDFs, or snap packaging photos with Groq AI fallback.",
-    accent: "cyan",
-    tags: ["EAN-13 & GS1 India", "Invoice OCR", "Camera Fallback"],
-  },
-  {
-    number: "02",
-    icon: ShieldCheck,
-    title: "Real-Time FIFO Guard",
-    tagline: "Dynamic freshness tracking",
-    description:
-      "Every batch is logged with time-stamped manufacture & expiry windows. Automated freshness scoring prioritizes front-shelf rotation before stock spoils.",
-    accent: "blue",
-    tags: ["Batch Expiry Tracking", "Zero-Waste Rotation", "Freshness Index"],
-  },
-  {
-    number: "03",
-    icon: BrainCircuit,
-    title: "Predictive Demand AI",
-    tagline: "Groq neural forecasting",
-    description:
-      "Groq-powered models analyze velocity, regional retail spikes (Diwali, weekends), and supplier lead times to accurately predict stock-out horizons.",
-    accent: "purple",
-    tags: ["99.4% Precision", "Festival Surge Alerts", "Stock-Out Horizons"],
-  },
-  {
-    number: "04",
-    icon: Zap,
-    title: "Autonomous Restock",
-    tagline: "Zero-touch requisition routing",
-    description:
-      "The instant stock breaches minimum safety buffers, one-click purchase orders are routed to verified FMCG distributors with live delivery tracking.",
-    accent: "cyan",
-    tags: ["Auto-PO Generation", "Distributor Sync", "Instant Webhooks"],
-  },
+  { icon: PackagePlus, title: "Product Entry", description: "Add a product, manually or in bulk.", accent: "blue" },
+  { icon: ScanBarcode, title: "Barcode / QR Scan", description: "Identify items instantly via camera.", accent: "cyan" },
+  { icon: ScanText, title: "OCR Invoice Processing", description: "Pull data straight from invoices.", accent: "purple" },
+  { icon: BrainCircuit, title: "AI Stock Analysis", description: "Movement is analyzed against history.", accent: "blue" },
+  { icon: TrendingUp, title: "Demand Prediction", description: "Future demand is forecast per SKU.", accent: "cyan" },
+  { icon: AlertTriangle, title: "Expiry & Low Stock", description: "At-risk items are flagged early.", accent: "purple" },
+  { icon: BellRing, title: "Auto Notifications", description: "The right people get alerted.", accent: "blue" },
+  { icon: LayoutDashboard, title: "Inventory Dashboard", description: "Everything in one live view.", accent: "cyan" },
 ];
 
 export default function Workflow({ id }: { id?: string }) {
@@ -86,32 +53,39 @@ export default function Workflow({ id }: { id?: string }) {
           variants={blurFadeUp}
           className="mx-auto max-w-2xl text-center"
         >
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#22D3EE]/30 bg-[#22D3EE]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#22D3EE]">
-            <Sparkles size={12} />
-            <span>Autonomous Pipeline</span>
-          </div>
+          <span className="text-[12px] font-medium uppercase tracking-[0.2em] text-[#22D3EE]">
+            Pipeline
+          </span>
           <h2 className="mt-4 text-[32px] font-extrabold tracking-tight text-white sm:text-[40px] md:text-[46px]">
-            How Inventra Operates
+            How Inventra Works
           </h2>
-          <p className="mt-4 text-[16px] leading-relaxed text-white/60 md:text-[17px]">
-            From the camera scanner to autonomous distributor restock — a four-stage closed loop.
+          <p className="mt-4 text-[16px] leading-relaxed text-white/55 md:text-[17px]">
+            From the first scan to the final alert — one connected, automated
+            pipeline.
           </p>
         </motion.div>
 
         <div ref={trackRef} className="relative mt-20">
-          {/* Connector track across the tops of cards on desktop */}
-          <div className="pointer-events-none absolute left-12 right-12 top-10 hidden h-[2px] bg-white/10 lg:block" />
+          {/* connector track (static, dim) */}
+          <div className="pointer-events-none absolute left-7 right-7 top-7 hidden h-px bg-white/10 lg:block" />
+          <div className="pointer-events-none absolute bottom-0 left-7 top-0 w-px bg-white/10 lg:hidden" />
+
+          {/* connector fill (animates in on scroll) */}
           <motion.div
             style={{ scaleX: lineScale }}
-            className="pointer-events-none absolute left-12 right-12 top-10 hidden h-[2px] origin-left bg-gradient-to-r from-[#22D3EE] via-[#60A5FA] to-[#A78BFA] lg:block"
+            className="pointer-events-none absolute left-7 right-7 top-7 hidden h-px origin-left bg-gradient-to-r from-[#60A5FA] via-[#22D3EE] to-[#A78BFA] lg:block"
+          />
+          <motion.div
+            style={{ scaleY: lineScale }}
+            className="pointer-events-none absolute bottom-0 left-7 top-0 w-px origin-top bg-gradient-to-b from-[#60A5FA] via-[#22D3EE] to-[#A78BFA] lg:hidden"
           />
 
           <motion.div
             initial="hidden"
             whileInView="visible"
             viewport={{ once: true, margin: "-60px" }}
-            variants={staggerContainer(0.12)}
-            className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4"
+            variants={staggerContainer(0.08)}
+            className="flex flex-col gap-6 lg:flex-row lg:flex-nowrap lg:justify-between lg:gap-3"
           >
             {STEPS.map((step, i) => {
               const hex = ACCENT_HEX[step.accent];
@@ -119,71 +93,44 @@ export default function Workflow({ id }: { id?: string }) {
                 <motion.div
                   key={step.title}
                   variants={blurFadeUp}
-                  className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.015] p-6 backdrop-blur-xl transition-all duration-300 hover:-translate-y-1.5 hover:border-white/20 hover:shadow-2xl"
-                  style={{
-                    boxShadow: "0 10px 30px -10px rgba(0,0,0,0.5)",
-                  }}
+                  className="relative z-10 flex items-start gap-4 lg:w-[150px] lg:flex-col lg:items-center lg:text-center"
                 >
-                  {/* Subtle top glow line */}
-                  <div
-                    className="pointer-events-none absolute inset-x-0 top-0 h-[2px] opacity-60 transition-opacity duration-300 group-hover:opacity-100"
-                    style={{
-                      background: `linear-gradient(90deg, transparent, ${hex}, transparent)`,
+                  <motion.div
+                    animate={{ y: [0, -6, 0] }}
+                    transition={{
+                      duration: 4 + (i % 3),
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      delay: i * 0.2,
                     }}
-                  />
-
-                  <div>
-                    {/* Header: Stage Number & Icon */}
-                    <div className="flex items-center justify-between">
-                      <div
-                        className="flex h-12 w-12 items-center justify-center rounded-xl border backdrop-blur-md transition-transform duration-300 group-hover:scale-105"
-                        style={{
-                          borderColor: `${hex}40`,
-                          background: `${hex}15`,
-                          color: hex,
-                          boxShadow: `0 0 20px -4px ${hex}40`,
-                        }}
-                      >
-                        <step.icon size={22} strokeWidth={1.8} />
-                      </div>
-
-                      <span
-                        className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold"
-                        style={{
-                          borderColor: `${hex}40`,
-                          background: "#16181F",
-                          color: hex,
-                        }}
-                      >
-                        STAGE {step.number}
-                      </span>
-                    </div>
-
-                    <div className="mt-5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
-                        {step.tagline}
-                      </span>
-                      <h3 className="mt-1 text-[18px] font-bold text-white group-hover:text-white">
-                        {step.title}
-                      </h3>
-                      <p className="mt-2.5 text-[13.5px] leading-relaxed text-white/60">
-                        {step.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Micro-tags / pills */}
-                  <div className="mt-6 border-t border-white/10 pt-4">
-                    <div className="flex flex-wrap gap-1.5">
-                      {step.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-white/70"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
+                    className="relative flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl border backdrop-blur-xl"
+                    style={{
+                      borderColor: `${hex}40`,
+                      background:
+                        "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01))",
+                      boxShadow: `0 0 22px -6px ${hex}66`,
+                      color: hex,
+                    }}
+                  >
+                    <step.icon size={22} strokeWidth={1.75} />
+                    <span
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-semibold"
+                      style={{
+                        borderColor: `${hex}55`,
+                        background: "#1D2026",
+                        color: hex,
+                      }}
+                    >
+                      {i + 1}
+                    </span>
+                  </motion.div>
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 backdrop-blur-md lg:mt-1 lg:border-none lg:bg-transparent lg:px-0 lg:py-0">
+                    <h3 className="text-[14px] font-semibold text-white">
+                      {step.title}
+                    </h3>
+                    <p className="mt-1 text-[12.5px] leading-relaxed text-white/45">
+                      {step.description}
+                    </p>
                   </div>
                 </motion.div>
               );
@@ -193,4 +140,4 @@ export default function Workflow({ id }: { id?: string }) {
       </div>
     </section>
   );
-}
+}

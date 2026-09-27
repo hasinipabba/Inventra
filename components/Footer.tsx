@@ -10,7 +10,7 @@ const QUICK_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Workflow", href: "#workflow" },
   { label: "Solutions", href: "#solutions" },
-  { label: "Dashboard", href: "/admin/dashboard" },
+  { label: "Contact", href: "#contact" },
   { label: "Login", href: "/login" },
 ];
 
