@@ -9,7 +9,6 @@ const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Workflow", href: "#workflow" },
   { label: "Solutions", href: "#solutions" },
-  { label: "Contact", href: "#contact" },
 ];
 
 const NAV_HEIGHT = 88; // px — used to offset smooth-scroll targets under the fixed navbar
@@ -94,7 +93,13 @@ export default function Navbar() {
           href="/login"
           className="hidden rounded-full border border-white/15 bg-white/[0.06] px-4 py-2 text-[13.5px] font-medium text-white backdrop-blur-sm transition-colors duration-200 hover:bg-white/[0.12] md:inline-block"
         >
-          Login
+          Sign In
+        </Link>
+        <Link
+          href="/admin/dashboard"
+          className="hidden rounded-full border border-[#60A5FA]/40 bg-[#60A5FA]/20 px-4 py-2 text-[13.5px] font-semibold text-white shadow-[0_0_16px_rgba(96,165,250,0.3)] backdrop-blur-sm transition-all duration-200 hover:bg-[#60A5FA]/30 hover:scale-[1.03] md:inline-block"
+        >
+          Live Demo →
         </Link>
 
         {/* Mobile menu toggle */}
