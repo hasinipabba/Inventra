@@ -5,7 +5,6 @@ import PageBackground from "@/components/PageBackground";
 import Features from "@/components/Features";
 import Workflow from "@/components/Workflow";
 import Solutions from "@/components/Solutions";
-import Contact from "@/components/Contact";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -31,7 +30,6 @@ export default function Home() {
       <Features id="features" />
       <Workflow id="workflow" />
       <Solutions id="solutions" />
-      <Contact id="contact" />
       <Footer />
     </main>
   );

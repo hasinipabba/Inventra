@@ -9,7 +9,6 @@ const NAV_LINKS = [
   { label: "Features", href: "#features" },
   { label: "Workflow", href: "#workflow" },
   { label: "Solutions", href: "#solutions" },
-  { label: "Contact", href: "#contact" },
 ];
 
 const NAV_HEIGHT = 88; // px — used to offset smooth-scroll targets under the fixed navbar
