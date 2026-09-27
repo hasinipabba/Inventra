@@ -74,16 +74,16 @@ export function ScanWorkflow() {
         return;
       }
       if (res.status === 429) {
-        setStage({ kind: "error", message: "Product API rate limit reached. Wait a moment and try again.", canRetry: true });
+        setStage({ kind: "manual_entry", barcode, reason: "External product lookup limit reached. You can enter details and save." });
         return;
       }
       if (res.status === 504) {
-        setStage({ kind: "error", message: "Lookup timed out — check your network connection.", canRetry: true });
+        setStage({ kind: "manual_entry", barcode, reason: "Lookup timed out. You can enter details and save." });
         return;
       }
-      setStage({ kind: "error", message: data.error || "Lookup failed unexpectedly.", canRetry: true });
+      setStage({ kind: "manual_entry", barcode, reason: data.error || "Enter details to save to inventory." });
     } catch {
-      setStage({ kind: "error", message: "Network error while looking up this barcode.", canRetry: true });
+      setStage({ kind: "manual_entry", barcode, reason: "Network lookup skipped. Enter details to save to inventory." });
     }
   }
 
