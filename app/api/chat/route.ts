@@ -62,16 +62,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // Safely compute products expiring within 7 days
+    // Safely compute products expiring within 14 days
     const now = new Date();
-    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const in14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
     const expiringSoon = productsList.filter((p) => {
       if (!p.expiryDate) return false;
       const d = new Date(p.expiryDate);
-      return !isNaN(d.getTime()) && d >= now && d <= in7Days;
+      return !isNaN(d.getTime()) && d >= now && d <= in14Days;
     });
 
-    const recentProducts = productsList.slice(0, 100);
+    // Curate actionable items to stay comfortably within Groq's 8,000 TPM limit
+    const outOfStock = productsList.filter((p) => p.status === "out" || (p.stock ?? 0) === 0);
+    const lowStock = productsList.filter((p) => p.status === "low" && (p.stock ?? 0) > 0);
+    const inStockSample = productsList
+      .filter((p) => p.status !== "out" && p.status !== "low")
+      .slice(0, 10);
+
+    const formatLine = (p: (typeof productsList)[0]) =>
+      `- ${p.name} (SKU:${p.sku ?? "N/A"}) | Qty:${p.stock ?? 0} | Status:${p.status ?? "in"} | Exp:${p.expiryDate ?? "N/A"} | WH:${p.warehouse ?? "Unassigned"}`;
 
     const context = `
 You are Inventra AI, a knowledgeable and concise inventory intelligence assistant.
@@ -81,46 +89,54 @@ FORMATTING RULES FOR MAXIMUM READABILITY:
 - Structure your response using clean, bite-sized paragraphs separated by blank lines.
 - When listing items, products, or metrics, format them as clean bullet points with bold titles (e.g., "* **Product Name**: Details").
 - When suggesting next steps or actions, use a numbered list (e.g., "1. Action step").
-- Do NOT output dense, unbroken walls of text.
-- Be direct, specific, and actionable.
+- Do NOT output dense, unbroken walls of text. Keep responses focused and readable.
 
 CURRENT INVENTORY SUMMARY:
-Total products: ${productsList.length}
-Low stock: ${productsList.filter((p) => p.status === "low").length}
-Out of stock: ${productsList.filter((p) => p.status === "out").length}
-Expiring in 7 days: ${expiringSoon.length}
+Total products in catalog: ${productsList.length}
+Low stock items: ${lowStock.length}
+Out of stock items: ${outOfStock.length}
+Expiring soon: ${expiringSoon.length}
 
 WAREHOUSES:
 ${warehousesList.map((w) => `- ${w.name}${w.location ? ` (${w.location})` : ""}`).join("\n")}
 
-PRODUCTS (recent ${recentProducts.length}):
-${recentProducts
-  .map(
-    (p) =>
-      `- ${p.name} | SKU: ${p.sku ?? "N/A"} | Qty: ${p.stock ?? 0} | Status: ${p.status ?? "in"} | Expiry: ${
-        p.expiryDate ?? "N/A"
-      } | Warehouse: ${p.warehouse ?? "Unassigned"} | Category: ${p.category ?? "General"}`
-  )
-  .join("\n")}
+OUT OF STOCK (Top ${Math.min(outOfStock.length, 18)}):
+${outOfStock.length === 0 ? "None" : outOfStock.slice(0, 18).map(formatLine).join("\n")}
+
+LOW STOCK (Top ${Math.min(lowStock.length, 18)}):
+${lowStock.length === 0 ? "None" : lowStock.slice(0, 18).map(formatLine).join("\n")}
 
 EXPIRING SOON:
 ${
   expiringSoon.length === 0
     ? "None"
     : expiringSoon
+        .slice(0, 12)
         .map((p) => `- ${p.name} | SKU: ${p.sku ?? "N/A"} | Expires: ${p.expiryDate} | Qty: ${p.stock ?? 0}`)
         .join("\n")
 }
+
+ACTIVE PRODUCTS SAMPLE:
+${inStockSample.map(formatLine).join("\n")}
 
 PENDING PURCHASE REQUESTS:
 ${
   pendingProcurement.length === 0
     ? "None"
     : pendingProcurement
+        .slice(0, 8)
         .map((p) => `- ${p.product ?? "Unknown item"} | Qty requested: ${p.quantity ?? 0} | Date: ${p.date ?? "N/A"}`)
         .join("\n")
 }
 `.trim();
+
+    // Window conversation history to the last 4 turns to avoid token buildup
+    const sanitizedMessages: Array<{ role: "user" | "assistant"; content: string }> = messages
+      .slice(-4)
+      .map((m: any) => ({
+        role: (m.role === "user" ? "user" : "assistant") as "user" | "assistant",
+        content: typeof m.content === "string" ? m.content.slice(0, 600) : "",
+      }));
 
     const groq = new Groq({ apiKey });
 
@@ -179,31 +195,59 @@ ${
     let lastError: unknown = null;
     let completionText: string | null = null;
 
+    // Use max_tokens: 800 to keep (prompt + max_tokens) well under Groq's 8,000 TPM limit
     for (const model of candidateModels) {
       try {
         const createParams: any = {
           model,
-          messages: [{ role: "system", content: context }, ...messages],
-          max_tokens: 2048,
+          messages: [{ role: "system", content: context }, ...sanitizedMessages],
+          max_tokens: 800,
           temperature: 0.3,
         };
 
-        // For models that support reasoning_format, hide reasoning so user only gets clean paragraphs
         if (model.includes("gpt-oss")) {
           createParams.reasoning_format = "hidden";
         }
 
         const completion = await groq.chat.completions.create(createParams);
-
         const choice = completion.choices[0];
         completionText = choice?.message?.content?.trim() || null;
 
-        // Only accept actual assistant content — never display raw internal scratchpads
         if (completionText) break;
       } catch (err: any) {
         lastError = err;
         console.warn(`Groq completion failed with model ${model}:`, err?.message || err);
-        // Continue to try the next model candidate
+
+        // If rate limit / TPM exceeded, try immediate ultra-condensed emergency prompt
+        if (
+          err?.status === 413 ||
+          err?.status === 429 ||
+          err?.code === "rate_limit_exceeded" ||
+          err?.message?.includes("TPM")
+        ) {
+          try {
+            const emergencySummary = `Total products: ${productsList.length}, Low: ${lowStock.length}, Out: ${outOfStock.length}. Critical: ${outOfStock
+              .slice(0, 5)
+              .map((p) => p.name)
+              .join(", ")}.`;
+            const retryRes = await groq.chat.completions.create({
+              model,
+              messages: [
+                {
+                  role: "system",
+                  content: `You are Inventra AI. Answer concisely in clean bullet points.\n${emergencySummary}`,
+                },
+                ...sanitizedMessages.slice(-2),
+              ],
+              max_tokens: 350,
+              temperature: 0.3,
+            });
+            completionText = retryRes.choices[0]?.message?.content?.trim() || null;
+            if (completionText) break;
+          } catch (retryErr) {
+            console.warn(`Emergency compact retry failed for ${model}:`, retryErr);
+          }
+        }
         continue;
       }
     }
@@ -215,14 +259,14 @@ ${
     console.error("All Groq model attempts failed. Last error:", lastError);
     let errorMessage = "Unable to reach the AI assistant. Please try again in a moment.";
     const errObj = lastError as any;
-    if (errObj?.status === 429) {
-      errorMessage = "The AI service is experiencing high demand. Please try again in a few seconds.";
+    const rawMsg = errObj?.error?.message || errObj?.message || "";
+
+    if (errObj?.status === 429 || rawMsg.includes("rate_limit_exceeded") || rawMsg.includes("TPM")) {
+      errorMessage = "The AI rate limit was temporarily reached. Please ask a shorter question or wait a few seconds.";
     } else if (errObj?.status === 401 || errObj?.status === 403) {
       errorMessage = "AI authentication error. Please verify the GROQ_API_KEY environment variable.";
-    } else if (errObj?.error?.message && typeof errObj.error.message === "string") {
-      errorMessage = errObj.error.message;
-    } else if (errObj?.message && typeof errObj.message === "string") {
-      errorMessage = errObj.message;
+    } else if (rawMsg && typeof rawMsg === "string") {
+      errorMessage = rawMsg;
     }
 
     return Response.json({ error: errorMessage }, { status: 500 });
