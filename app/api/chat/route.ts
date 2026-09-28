@@ -152,19 +152,24 @@ ${
       console.warn("Could not query Groq models dynamically, using curated list:", listErr);
     }
 
+    // Prioritize clean, fast chat models that do not leak internal scratchpad reasoning
     const preferredOrder = [
       "qwen/qwen3.8-27b",
+      "allam-2-7b",
       "openai/gpt-oss-120b",
       "openai/gpt-oss-20b",
-      "allam-2-7b",
     ];
 
     const envModel = process.env.GROQ_MODEL?.trim();
     const candidateModels = Array.from(
       new Set(
         [
-          envModel && !DEPRECATED_MODELS.has(envModel) ? envModel : null,
+          "qwen/qwen3.8-27b",
+          envModel && !DEPRECATED_MODELS.has(envModel) && !envModel.includes("gpt-oss")
+            ? envModel
+            : null,
           ...preferredOrder.filter((m) => liveModelIds.length === 0 || liveModelIds.includes(m)),
+          envModel && !DEPRECATED_MODELS.has(envModel) ? envModel : null,
           ...liveModelIds,
           ...preferredOrder,
         ].filter((m): m is string => Boolean(m && !DEPRECATED_MODELS.has(m)))
@@ -176,21 +181,24 @@ ${
 
     for (const model of candidateModels) {
       try {
-        const completion = await groq.chat.completions.create({
+        const createParams: any = {
           model,
           messages: [{ role: "system", content: context }, ...messages],
           max_tokens: 2048,
           temperature: 0.3,
-        });
+        };
+
+        // For models that support reasoning_format, hide reasoning so user only gets clean paragraphs
+        if (model.includes("gpt-oss")) {
+          createParams.reasoning_format = "hidden";
+        }
+
+        const completion = await groq.chat.completions.create(createParams);
 
         const choice = completion.choices[0];
         completionText = choice?.message?.content?.trim() || null;
 
-        // If reasoning model returned empty content due to token length, check reasoning
-        if (!completionText && (choice?.message as any)?.reasoning) {
-          completionText = (choice?.message as any).reasoning.trim();
-        }
-
+        // Only accept actual assistant content — never display raw internal scratchpads
         if (completionText) break;
       } catch (err: any) {
         lastError = err;
