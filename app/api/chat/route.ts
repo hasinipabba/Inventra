@@ -74,7 +74,15 @@ export async function POST(req: Request) {
     const recentProducts = productsList.slice(0, 100);
 
     const context = `
-You are Inventra AI, an inventory management assistant. You have access to live inventory data. Answer questions based only on this data. Be concise and specific.
+You are Inventra AI, a knowledgeable and concise inventory intelligence assistant.
+You have access to live inventory, warehouse, and purchase request data.
+
+FORMATTING RULES FOR MAXIMUM READABILITY:
+- Structure your response using clean, bite-sized paragraphs separated by blank lines.
+- When listing items, products, or metrics, format them as clean bullet points with bold titles (e.g., "* **Product Name**: Details").
+- When suggesting next steps or actions, use a numbered list (e.g., "1. Action step").
+- Do NOT output dense, unbroken walls of text.
+- Be direct, specific, and actionable.
 
 CURRENT INVENTORY SUMMARY:
 Total products: ${productsList.length}
@@ -116,16 +124,50 @@ ${
 
     const groq = new Groq({ apiKey });
 
-    // Candidate models to try in priority order
+    // Deprecated models that Groq has decommissioned (never attempt these)
+    const DEPRECATED_MODELS = new Set([
+      "llama-3.1-8b-instant",
+      "llama-3.3-70b-versatile",
+      "llama3-8b-8192",
+      "llama3-70b-8192",
+      "mixtral-8x7b-32768",
+      "gemma-7b-it",
+      "gemma2-9b-it",
+    ]);
+
+    // Query active models dynamically from Groq if possible
+    let liveModelIds: string[] = [];
+    try {
+      const modelList = await groq.models.list();
+      liveModelIds = (modelList.data || [])
+        .map((m) => m.id)
+        .filter(
+          (id) =>
+            !id.includes("whisper") &&
+            !id.includes("guard") &&
+            !id.includes("orpheus") &&
+            !DEPRECATED_MODELS.has(id)
+        );
+    } catch (listErr) {
+      console.warn("Could not query Groq models dynamically, using curated list:", listErr);
+    }
+
+    const preferredOrder = [
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "allam-2-7b",
+    ];
+
+    const envModel = process.env.GROQ_MODEL?.trim();
     const candidateModels = Array.from(
       new Set(
         [
-          process.env.GROQ_MODEL,
-          "openai/gpt-oss-120b",
-          "openai/gpt-oss-20b",
-          "llama-3.3-70b-versatile",
-          "llama-3.1-8b-instant",
-        ].filter((m): m is string => Boolean(m && m.trim()))
+          envModel && !DEPRECATED_MODELS.has(envModel) ? envModel : null,
+          ...preferredOrder.filter((m) => liveModelIds.length === 0 || liveModelIds.includes(m)),
+          ...liveModelIds,
+          ...preferredOrder,
+        ].filter((m): m is string => Boolean(m && !DEPRECATED_MODELS.has(m)))
       )
     );
 
@@ -137,21 +179,24 @@ ${
         const completion = await groq.chat.completions.create({
           model,
           messages: [{ role: "system", content: context }, ...messages],
-          max_tokens: 1024,
+          max_tokens: 2048,
           temperature: 0.3,
         });
 
-        completionText = completion.choices[0]?.message?.content ?? null;
+        const choice = completion.choices[0];
+        completionText = choice?.message?.content?.trim() || null;
+
+        // If reasoning model returned empty content due to token length, check reasoning
+        if (!completionText && (choice?.message as any)?.reasoning) {
+          completionText = (choice?.message as any).reasoning.trim();
+        }
+
         if (completionText) break;
       } catch (err: any) {
         lastError = err;
         console.warn(`Groq completion failed with model ${model}:`, err?.message || err);
-        // Continue to try next candidate if model not found or decommissioned
-        if (err?.status === 404 || err?.status === 400 || err?.code === "model_not_found") {
-          continue;
-        }
-        // If it's a rate limit or auth error, don't keep hammering
-        break;
+        // Continue to try the next model candidate
+        continue;
       }
     }
 
@@ -160,10 +205,17 @@ ${
     }
 
     console.error("All Groq model attempts failed. Last error:", lastError);
-    const errorMessage =
-      (lastError as any)?.error?.message ||
-      (lastError as any)?.message ||
-      "Failed to get a response from the AI model. Please try again.";
+    let errorMessage = "Unable to reach the AI assistant. Please try again in a moment.";
+    const errObj = lastError as any;
+    if (errObj?.status === 429) {
+      errorMessage = "The AI service is experiencing high demand. Please try again in a few seconds.";
+    } else if (errObj?.status === 401 || errObj?.status === 403) {
+      errorMessage = "AI authentication error. Please verify the GROQ_API_KEY environment variable.";
+    } else if (errObj?.error?.message && typeof errObj.error.message === "string") {
+      errorMessage = errObj.error.message;
+    } else if (errObj?.message && typeof errObj.message === "string") {
+      errorMessage = errObj.message;
+    }
 
     return Response.json({ error: errorMessage }, { status: 500 });
   } catch (err: any) {
